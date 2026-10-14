@@ -28,3 +28,5 @@ jobs:
         run: npm run build
       - name: Rust / Tauri typecheck
         run: cargo check --manifest-path studio/src-tauri/Cargo.toml
+      - name: Rust API production and history tests
+        run: cargo test --manifest-path studio/src-tauri/Cargo.toml --lib
