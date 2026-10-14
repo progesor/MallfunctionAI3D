@@ -45,18 +45,25 @@ Yerel Windows arayüzünde referans yükle → workflow ve kalite seç → Comfy
 - `cd studio/src-tauri && cargo check && cargo test`: Windows/Rust ortamında backend doğrulaması.
 - **Tam E2E kabul henüz bekleniyor:** Windows Tauri derlemesi, /object_info uyumu, /upload/image, /prompt, /history, GLB dosyası, Blender LOD; bu testler yapılana kadar 'uygulama tam çalışıyor' denmeyecek.
 
-## M1.1 hotfix (2026-10-14): API-export, hata tanısı, büyük viewport
+## M1.1 (14 Ekim 2026) — ComfyUI API JSON ve geniş 3D viewport
 
-- Pixal3D/TRELLIS.2 üretiminin kaynağı artık **ComfyUI API Export JSON**; varsayılan kaynak kullanıcıdan doğrulanan 63 node'lu gerçek `Save3DAdvanced #322` grafıdır.
-- `ComfyUI API JSON İçe Aktar` düğmesinden kendi API JSON'unu ekle. `LoadImage`, `Save3DAdvanced` ve bağlantılı şekil/doku zinciri korunur. Üretim esnasında UI -> API yeniden derlemesi yapılmaz.
-- `Save3DAdvanced.viewport_state` nesne olarak korunur. Sadece maske üretimlerini reddetmek ve hata düğümünü göstermek için doğrulama/tanı eklendi.
-- ComfyUI Desktop RTX 5080 için raporlanan adres: `http://127.0.0.1:8191`. Settings -> Station etiketi `5080` olabilir.
-- Eski başarısız ComfyUI geçmişini yeni üretim yapmadan incelemek için kök klasörde `06_Diagnose-ComfyUI-Job.ps1` kullan:
-  ```powershell
-  powershell -NoProfile -ExecutionPolicy Bypass -File .\06_Diagnose-ComfyUI-Job.ps1 -ComfyUrl "http://127.0.0.1:8191"
-  ```
-  `reports/ComfyHistory_*.json` oluşur. Bu dosyada yerel yollar ve kaynak görsel adları olabilir; herkese açık GitHub'a yükleme.
-- Üstteki gereksiz büyük başlık küçültüldü; GLB/3D Inspector görüntüleyici daha büyük ve tam genişlik moduna geçebiliyor.
-- Yeni CI testi: API-export regression, Windows Rust birim testleri. Gerçek RTX 5080 üretim kabulü henüz bu düzeltmeyle yapılmadı.
+- ComfyUI API Export artık üretimin asıl kaynağıdır; UI/LiteGraph -> API dönüşümünde `Save3DAdvanced.viewport_state` kaybı önlenir.
+- `ComfyUI API JSON İçe Aktar` butonu ile aynı Pixal3D/TRELLIS.2 grafının ComfyUI'den kaydedilmiş API formatını seçebilirsin. Dosya kopyalanır, orijinal değişmez.
+- İşlem bitip GLB oluşmazsa `Tanı Kaydı Görüntüle` hata veren ComfyUI node'unu raporlar.
+- Inspector toolbar'daki genişlet simgesi 3D görünümü tam alana açar; başlık ve aktivite çubuğu daraltıldı.
+- RTX 5080 istasyonunda ComfyUI `http://127.0.0.1:8191` adresinde çalışıyor; GPU raporundaki eski `4070ti-super` istasyon etiketini Settings'te `5080` yap.
+- Eski `06_Diagnose-ComfyUI-Job.ps1` salt okunur `/history` araştırması yapabilir.
 
-Ayrıntılar: `docs/AI3D_STUDIO_M1_1_HOTFIX_2026-10-14.md`.
+Ayrıntılı kayıt: `docs/AI3D_STUDIO_M1_1_HOTFIX_2026-10-14.md`.
+
+## M1.2 — Kaynak workflow sadakati ve uygulama kullanımı
+
+Önceki M1.1 sürümü kullanıcı API export grafındaki tüm KSampler seed'lerini tek bir değerle değiştiriyordu; Pixal3D ve TRELLIS.2 sonuçlarının bozulmasına sebep olabilecek bu davranış kaldırıldı. **Varsayılan seçim `Workflow aynen`**: yüklenen görsel adı dışında hiçbir kaynak ayara dokunmadan tam API JSON'u ComfyUI'ye gönderir. Bu mod 3D üretim süresi/kalitesini ComfyUI UI koşusuyla karşılaştırmak içindir; gerçek üretim hâlâ PC üzerinde test gerektirir.
+
+`Özel ayarlar` modunda triangle/bake/texture ayarları kullanılır. Seed'ler ancak ayrı `Tüm KSampler seed'lerini değiştir` seçeneğiyle değişir. Üretim raporunda değişen alanlar kayıtlıdır; backend izin verilmeyen graph değişikliklerini engeller.
+
+Referans seçimi artık PNG/JPEG/WEBP görsel thumbnail'ı gösterir. Arşivdeki model `Arşivden kaldır` ile **çöp arşivine** taşınabilir, orijinal kullanıcı dosyası silinmez. 3D görüntüleyici için genişletme simgesi ve küçültülmüş kontrol panelleri vardır.
+
+Test: `npm run test:adapter`, `npm run build`, `cargo test --lib`. Gerçek RTX 5080/ComfyUI karşılaştırması tamamlanmadan tam düzeldi kabul edilmez.
+
+Bkz: `docs/AI3D_STUDIO_M1_2_FIDELITY_UX_2026-10-14.md`.

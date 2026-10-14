@@ -36,6 +36,35 @@ pub fn import_model_file(path:String,state:State<'_,StudioState>) -> StudioResul
 }
 
 #[tauri::command]
+pub fn read_reference_preview(path:String) -> StudioResult<String> {
+    let p=Path::new(&path);
+    if !p.is_file() {return Err("Referans dosyası bulunamadı.".into());}
+    let ext=p.extension().and_then(|x|x.to_str()).unwrap_or("").to_ascii_lowercase();
+    let mime=match ext.as_str() {
+        "png"=>"image/png", "jpg" | "jpeg"=>"image/jpeg", "webp"=>"image/webp",
+        _=>return Err("Referans görsel PNG, JPEG veya WEBP olmalı.".into()),
+    };
+    if fs::metadata(p).map_err(|e|e.to_string())?.len()>30_000_000 {
+        return Err("Önizleme görseli 30 MB sınırını aşıyor.".into());
+    }
+    let bytes=fs::read(p).map_err(|e|e.to_string())?;
+    let valid=match ext.as_str() {
+        "png"=>bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "jpg" | "jpeg"=>bytes.starts_with(&[0xff,0xd8,0xff]),
+        "webp"=>bytes.len()>12 && &bytes[..4]==b"RIFF" && &bytes[8..12]==b"WEBP",
+        _=>false,
+    };
+    if !valid {return Err("Dosya uzantısıyla görsel biçimi uyuşmuyor.".into());}
+    Ok(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
+}
+
+#[tauri::command]
+pub fn move_asset_to_trash(asset_id:String,state:State<'_,StudioState>) -> StudioResult<String> {
+    let moved=state.trash_asset(&asset_id)?;
+    Ok(moved.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 pub fn read_asset_glb(asset_id:String,state:State<'_,StudioState>) -> StudioResult<String> {
     let asset=state.asset_by_id(&asset_id)?;
     let bytes=fs::read(&asset.file_path).map_err(|e|format!("Arşiv dosyası okunamadı: {e}"))?;

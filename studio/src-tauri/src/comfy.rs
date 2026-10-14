@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 const PIXAL_API: &str=include_str!("../../../workflows/PLAYBOX_FoxPlush_pixal3d_api_v01.json");
 
-fn validate_pilot_api(prompt:&Value)->StudioResult<()> {
+fn validate_pilot_api(prompt:&Value) -> StudioResult<()> {
     let nodes=prompt.as_object().ok_or("ComfyUI API JSON nesnesi bekleniyor")?;
     if nodes.len()<25 || nodes.len()>600 {return Err("API 3D workflow boyutu geçersiz".into());}
     for (id,kind) in [("122","LoadImage"),("186","DecimateMesh"),("285","MeshToFile3D"),
@@ -30,22 +30,25 @@ fn validate_pilot_api(prompt:&Value)->StudioResult<()> {
     }
     Ok(())
 }
-fn builtin_api(id:&str)->StudioResult<Value> {
+
+fn builtin_api(id: &str) -> StudioResult<Value> {
     let mut prompt:Value=serde_json::from_str(PIXAL_API).map_err(|e|e.to_string())?;
     validate_pilot_api(&prompt)?;
     if id=="trellis2-fox" {prompt["316"]["inputs"]["value"]=json!(true);}
     Ok(prompt)
 }
-fn imported_dir(state:&StudioState)->StudioResult<std::path::PathBuf> {
+
+fn imported_dir(state:&StudioState) -> StudioResult<std::path::PathBuf> {
     let directory=state.library_dir()?.join("workflows");
     fs::create_dir_all(&directory).map_err(|e|e.to_string())?;
     Ok(directory)
 }
-fn workflow_document(id:&str,state:&StudioState)->StudioResult<Value> {
-    if matches!(id,"pixal3d-fox"|"trellis2-fox") {
+
+fn workflow_document(id:&str,state:&StudioState) -> StudioResult<Value> {
+    if matches!(id,"pixal3d-fox" | "trellis2-fox") {
         return Ok(json!({"format":"api","prompt":builtin_api(id)?}));
     }
-    if !id.starts_with("api-")||id.len()!=20||!id[4..].chars().all(|c|c.is_ascii_hexdigit()) {
+    if !id.starts_with("api-") || id.len()!=20 || !id[4..].chars().all(|c|c.is_ascii_hexdigit()) {
         return Err("Bilinmeyen veya geçersiz workflow kimliği".into());
     }
     let path=imported_dir(state)?.join(format!("{id}.json"));
@@ -55,43 +58,45 @@ fn workflow_document(id:&str,state:&StudioState)->StudioResult<Value> {
     validate_pilot_api(prompt)?;
     Ok(json!({"format":"api","prompt":prompt}))
 }
+
 #[tauri::command]
-pub fn get_workflows(state:State<'_,StudioState>)->StudioResult<Vec<WorkflowInfo>> {
+pub fn get_workflows(state:State<'_,StudioState>) -> StudioResult<Vec<WorkflowInfo>> {
     let mut items=vec![
-        WorkflowInfo{id:"pixal3d-fox".into(),title:"Pixal3D • Image → PBR Model".into(),
+        WorkflowInfo { id:"pixal3d-fox".into(),title:"Pixal3D • Image → PBR Model".into(),
             description:"ComfyUI API formatından doğrulanmış PLAYBOX pilot profili".into(),
-            family:"Pixal3D".into(),version:"api-v01".into()},
-        WorkflowInfo{id:"trellis2-fox".into(),title:"TRELLIS.2 • Image → PBR Model".into(),
+            family:"Pixal3D".into(),version:"api-v01".into() },
+        WorkflowInfo { id:"trellis2-fox".into(),title:"TRELLIS.2 • Image → PBR Model".into(),
             description:"Aynı API grafı, TRELLIS.2 alternatif motor".into(),
-            family:"TRELLIS.2".into(),version:"api-v01".into()},
+            family:"TRELLIS.2".into(),version:"api-v01".into() },
     ];
     for entry in fs::read_dir(imported_dir(&state)?).map_err(|e|e.to_string())? {
         let entry=entry.map_err(|e|e.to_string())?;
-        if !entry.file_type().map_err(|e|e.to_string())?.is_file()
-          ||entry.path().extension().and_then(|e|e.to_str())!=Some("json"){continue;}
+        if !entry.file_type().map_err(|e|e.to_string())?.is_file() || entry.path().extension().and_then(|e|e.to_str())!=Some("json") {continue;}
         let Ok(raw)=fs::read(entry.path()) else {continue};
         let Ok(manifest)=serde_json::from_slice::<Value>(&raw) else {continue};
         let Some(id)=manifest.get("id").and_then(Value::as_str) else {continue};
-        if !id.starts_with("api-")||id.len()!=20||!id[4..].chars().all(|c|c.is_ascii_hexdigit()){continue;}
+        if !id.starts_with("api-") || id.len()!=20 || !id[4..].chars().all(|c|c.is_ascii_hexdigit()) {continue;}
         let Some(prompt)=manifest.get("prompt") else {continue};
-        if validate_pilot_api(prompt).is_err(){continue;}
+        if validate_pilot_api(prompt).is_err() {continue;}
         let title=manifest.get("title").and_then(Value::as_str).unwrap_or("Imported API Workflow").to_owned();
-        let family=if prompt.pointer("/316/inputs/value").and_then(Value::as_bool)==Some(true){"TRELLIS.2"}else{"Pixal3D"};
-        items.push(WorkflowInfo{id:id.into(),title,description:"Yerel API export · salt okunur kaynak kopyası".into(),family:family.into(),version:"user-api".into()});
+        let family=if prompt.pointer("/316/inputs/value").and_then(Value::as_bool)==Some(true) {"TRELLIS.2"} else {"Pixal3D"};
+        items.push(WorkflowInfo {id:id.into(),title,description:"Yerel API export · salt okunur kaynak kopyası".into(),family:family.into(),version:"user-api".into()});
     }
     Ok(items)
 }
+
 #[tauri::command]
-pub fn get_workflow_json(id:String,state:State<'_,StudioState>)->StudioResult<Value>{
+pub fn get_workflow_json(id:String,state:State<'_,StudioState>) -> StudioResult<Value> {
     workflow_document(&id,&state)
 }
+
 #[tauri::command]
-pub fn comfy_import_api_workflow(path:String,state:State<'_,StudioState>)->StudioResult<WorkflowInfo>{
+pub fn comfy_import_api_workflow(path:String,state:State<'_,StudioState>) -> StudioResult<WorkflowInfo> {
     let source=Path::new(&path);
     if !source.is_file() || source.extension().and_then(|v|v.to_str()).map(|v|v.to_ascii_lowercase())!=Some("json".into()) {
         return Err(".json API export dosyası seç.".into());
     }
-    if fs::metadata(source).map_err(|e|e.to_string())?.len()>8_000_000{return Err("Workflow 8 MB sınırını aşıyor".into());}
+    if fs::metadata(source).map_err(|e|e.to_string())?.len()>8_000_000 {return Err("Workflow 8 MB sınırını aşıyor".into());}
     let data=fs::read(source).map_err(|e|e.to_string())?;
     let parsed:Value=serde_json::from_slice(&data).map_err(|e|format!("API JSON okunamadı: {e}"))?;
     let prompt=parsed.get("prompt").filter(|v|v.is_object()).unwrap_or(&parsed);
@@ -108,7 +113,7 @@ pub fn comfy_import_api_workflow(path:String,state:State<'_,StudioState>)->Studi
         use std::io::Write;
         writer.write_all(&serde_json::to_vec_pretty(&manifest).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
     }
-    let family=if prompt.pointer("/316/inputs/value").and_then(Value::as_bool)==Some(true){"TRELLIS.2"}else{"Pixal3D"};
+    let family=if prompt.pointer("/316/inputs/value").and_then(Value::as_bool)==Some(true) {"TRELLIS.2"} else {"Pixal3D"};
     Ok(WorkflowInfo{id,title,description:"ComfyUI API export · arşivde korunan kopya".into(),family:family.into(),version:"user-api".into()})
 }
 
@@ -162,15 +167,61 @@ pub async fn comfy_upload_image(path:String,state:State<'_,StudioState>) -> Stud
     Ok(name.to_owned())
 }
 
+/// Fail closed: the "source" mode must submit exactly the user's imported
+/// workflow except the uploaded image name; no silent seeds/preset rewrites.
+/// Custom mode permits only literal, documented controls (never any links).
+fn validate_submission_fidelity(source:&Value, submitted:&Value, custom:bool, override_seeds:bool) -> StudioResult<Vec<String>> {
+    let original=source.as_object().ok_or("Kaynak API workflow geçersiz")?;
+    let prepared=submitted.as_object().ok_or("Çalıştırılacak API workflow geçersiz")?;
+    if original.len()!=prepared.len() || original.keys().any(|k|!prepared.contains_key(k)) {
+        return Err("Workflow node ekleme/silme tespit edildi. Kaynak grafı aynen çalıştırın.".into());
+    }
+    let mut edits=Vec::new();
+    for (id,node) in original {
+        let actual=prepared.get(id).ok_or("Workflow node eksik")?;
+        if node.get("class_type")!=actual.get("class_type") || node.get("_meta")!=actual.get("_meta") {
+            return Err(format!("Workflow #{id} düğüm türü/metaverisi değiştirilmiş"));
+        }
+        let before=node.get("inputs").and_then(Value::as_object).ok_or("Kaynak node inputs hatalı")?;
+        let after=actual.get("inputs").and_then(Value::as_object).ok_or("Çalışma node inputs hatalı")?;
+        if before.len()!=after.len() || before.keys().any(|name|!after.contains_key(name)) {
+            return Err(format!("Workflow #{id} girişleri değiştirilmiş"));
+        }
+        for (key,old) in before {
+            let new=&after[key];
+            if old==new {continue;}
+            let field=format!("{id}.{key}");
+            let allowed=field=="122.image" || (custom && matches!(field.as_str(),
+              "186.target_face_count" | "288.value" | "224.resolution" | "233.resolution" |
+              "233.samples" | "261.resolution" | "241.resolution" | "94.target_resolution" | "316.value"))
+              || (custom && override_seeds && matches!(field.as_str(),
+              "3.seed" | "12.seed" | "18.seed" | "23.seed"));
+            // A connected socket is not a literal setting; never permit rerouting.
+            let connected=old.as_array().is_some_and(|v| v.len()==2 && v[0].is_string() && v[1].is_number());
+            if !allowed || connected {return Err(format!("İzin verilmeyen workflow değişikliği: #{field}"));}
+            edits.push(field);
+        }
+    }
+    Ok(edits)
+}
+
 #[tauri::command]
 pub async fn comfy_submit_job(request:QueueRequest,state:State<'_,StudioState>) -> StudioResult<JobStatus> {
-    workflow_document(&request.workflow_id,&state)?; // Only allow registered local production recipes.
+    let document=workflow_document(&request.workflow_id,&state)?;
+    let registered=document.get("prompt").ok_or("Kayıtlı kaynak workflow bulunamadı")?;
+    if registered!=&request.ui_workflow {
+        return Err("Kaynak workflow ile seçilen arşiv sürümü uyuşmuyor. Workflow'u yeniden seçin.".into());
+    }
+    let custom=request.config.get("productionMode").and_then(Value::as_str)==Some("custom");
+    let override_seeds=request.config.get("overrideSeeds").and_then(Value::as_bool)==Some(true);
+    let changes=validate_submission_fidelity(registered,&request.api_prompt,custom,override_seeds)?;
     validate_pilot_api(&request.api_prompt)?;
     if !request.api_prompt.is_object() || request.api_prompt.as_object().is_none_or(|v|v.is_empty()) {
         return Err("ComfyUI API prompt JSON geçersiz.".into());
     }
     let client_id=Uuid::new_v4().to_string();
-    // ComfyUI API prompt is NOT a LiteGraph UI workflow; keep provenance separate.
+    // API prompt is already ComfyUI executable format. Do not pass it as a
+    // LiteGraph "workflow" PNG metadata field: UI and API formats differ.
     let body=json!({"prompt":request.api_prompt,"client_id":client_id,
         "extra_data":{"extra_pnginfo":{"ai3d_studio":{"workflowId":request.workflow_id,"format":"api"}}}});
     let response=state.client.post(endpoint(&state,"/prompt")?).json(&body)
@@ -191,7 +242,8 @@ pub async fn comfy_submit_job(request:QueueRequest,state:State<'_,StudioState>) 
     let summary=json!({"promptId":pid,"workflowId":request.workflow_id,
         "station":state.current_settings()?.station,
         "startedAt":chrono::Utc::now().to_rfc3339(),
-        "config":request.config, "imageSourcePath":request.image_path,
+        "config":request.config, "changedInputs":changes,
+        "imageSourcePath":request.image_path,
         "prompt":body["prompt"],"sourceApiWorkflow":request.ui_workflow});
     fs::write(dir.join("generation.json"),serde_json::to_vec_pretty(&summary).map_err(|e|e.to_string())?)
         .map_err(|e|e.to_string())?;
@@ -229,7 +281,7 @@ fn gather_glb(value:&Value, found:&mut Vec<Output3d>) {
     }
 }
 
-fn history_failure_detail(entry:&Value)->String {
+fn history_failure_detail(entry:&Value) -> String {
     if let Some(messages)=entry.pointer("/status/messages").and_then(Value::as_array) {
         for item in messages.iter().rev() {
             if let Some(values)=item.as_array() {
@@ -245,15 +297,15 @@ fn history_failure_detail(entry:&Value)->String {
         }
     }
     let status=entry.pointer("/status/status_str").and_then(Value::as_str).unwrap_or("unknown");
-    format!("ComfyUI işlem durumu: {status}; ayrıntılar için Tanı Kaydı seç.")
+    format!("ComfyUI işlem durumu: {status}; ayrıntılar için 'Tanı Kaydı' seç.")
 }
 
 #[tauri::command]
-pub async fn comfy_job_diagnostics(prompt_id:String,state:State<'_,StudioState>)->StudioResult<Value>{
+pub async fn comfy_job_diagnostics(prompt_id:String,state:State<'_,StudioState>) -> StudioResult<Value> {
     if Uuid::parse_str(&prompt_id).is_err(){return Err("Geçersiz prompt kimliği".into());}
-    let response=state.client.get(endpoint(&state,&format!("/history/{prompt_id}"))?)
+    let result=state.client.get(endpoint(&state,&format!("/history/{prompt_id}"))?)
         .send().await.map_err(|e|e.to_string())?.error_for_status().map_err(|e|e.to_string())?;
-    let history:Value=response.json().await.map_err(|e|e.to_string())?;
+    let history:Value=result.json().await.map_err(|e|e.to_string())?;
     let entry=history.get(&prompt_id).unwrap_or(&Value::Null);
     let outputs=entry.get("outputs").and_then(Value::as_object)
         .map(|v|v.iter().map(|(key,val)|json!({"node":key,"outputKeys":val.as_object()
@@ -261,10 +313,17 @@ pub async fn comfy_job_diagnostics(prompt_id:String,state:State<'_,StudioState>)
         .unwrap_or_default();
     let messages=entry.pointer("/status/messages").cloned().unwrap_or(json!([]));
     let stored_prompt=entry.get("prompt").and_then(Value::as_array).and_then(|items|items.get(2));
+    let run_manifest=state.library_dir()?.join("runs").join(&prompt_id).join("generation.json");
+    let summary=fs::read(&run_manifest).ok().and_then(|v|serde_json::from_slice::<Value>(&v).ok()).unwrap_or(Value::Null);
     Ok(json!({"promptId":prompt_id,"comfyUrl":state.current_settings()?.comfy_url,
         "gpuStation":state.current_settings()?.station,
         "status":entry.pointer("/status/status_str"),"completed":entry.pointer("/status/completed"),
         "saveNodeInExecutedPrompt":stored_prompt.and_then(|v|v.get("322")).is_some(),
+        "saveOutput":entry.pointer("/outputs/322"), "changedInputs":summary.get("changedInputs"),
+        "productionMode":summary.pointer("/config/productionMode"),
+        "samplerSeeds":summary.get("prompt").and_then(|p|p.as_object()).map(|m|m.iter()
+            .filter(|(_,node)|node.get("class_type").and_then(Value::as_str)==Some("KSampler"))
+            .map(|(id,node)|json!({"id":id,"seed":node.pointer("/inputs/seed")})).collect::<Vec<_>>()),
         "outputNodes":outputs,"messages":messages,"historyAvailable":entry.is_object()}))
 }
 
@@ -291,7 +350,7 @@ pub async fn comfy_poll_job(prompt_id:String,state:State<'_,StudioState>) -> Stu
             return Ok(JobStatus{prompt_id,status:"failed".into(),message:detail,asset:None});
         }
         let mut files=vec![];
-        if let Some(outputs)=entry.get("outputs") { gather_glb(outputs,&mut files); }
+        if let Some(save_output)=entry.pointer("/outputs/322") { gather_glb(save_output,&mut files); }
         if let Some(output)=files.first() {
             let url=endpoint(&state,"/view")?;
             let response=state.client.get(url)
@@ -308,7 +367,7 @@ pub async fn comfy_poll_job(prompt_id:String,state:State<'_,StudioState>) -> Stu
             return Ok(JobStatus{prompt_id,status:"done".into(),message:"GLB indirildi ve arşivlendi".into(),asset:Some(asset)});
         }
         if job_status=="success" || entry.pointer("/status/completed").and_then(Value::as_bool)==Some(true) {
-            let detail="ComfyUI işi bitirdi ancak GLB history çıkışında yok. Save3DAdvanced #322 hatası olabilir. Tanı Kaydı oluşturup paylaş.";
+            let detail="ComfyUI işi bitirdi ancak GLB history çıkışında yok. Save3DAdvanced #322 hatası veya farklı çıkış formatı olabilir. 'Tanı Kaydı' düğmesine basıp raporu paylaş.";
             state.job_update(&prompt_id,"no_output",None,detail)?;
             return Ok(JobStatus{prompt_id,status:"no_output".into(),message:detail.into(),asset:None});
         }
@@ -334,6 +393,10 @@ mod tests {
         assert_eq!(hits.len(),1);
         assert_eq!(hits[0].filename,"fox.glb");
     }
+    #[test] fn ignores_path_traversal() {
+        let mut hits=vec![];gather_glb(&json!({"filename":"../bad.glb","type":"output"}),&mut hits);
+        assert!(hits.is_empty());
+    }
     #[test] fn supplied_api_pilot_has_full_3d_save_chain() {
         let template=builtin_api("pixal3d-fox").unwrap();
         validate_pilot_api(&template).unwrap();
@@ -343,23 +406,37 @@ mod tests {
         assert_eq!(switched["316"]["inputs"]["value"],true);
     }
     #[test] fn rejects_mask_only_3d_output() {
-        let mut prompt=builtin_api("pixal3d-fox").unwrap();
-        prompt["322"]["inputs"]["model_3d"]=json!(["303",0]);
-        assert!(validate_pilot_api(&prompt).is_err());
-        prompt["322"]["inputs"]["model_3d"]=json!(["285",0]);
-        prompt["322"]["inputs"]["viewport_state"]=json!("");
-        assert!(validate_pilot_api(&prompt).is_err());
+        let mut payload=builtin_api("pixal3d-fox").unwrap();
+        payload["322"]["inputs"]["model_3d"]=json!(["303",0]);
+        assert!(validate_pilot_api(&payload).is_err());
+        payload["322"]["inputs"]["model_3d"]=json!(["285",0]);
+        payload["322"]["inputs"]["viewport_state"]=json!("");
+        assert!(validate_pilot_api(&payload).is_err());
     }
-    #[test] fn extracts_comfy_execution_error() {
+    #[test] fn unchanged_imported_api_is_allowed_and_seed_rewrite_is_blocked() {
+        let source=builtin_api("pixal3d-fox").unwrap();
+        let mut submitted=source.clone();
+        submitted["122"]["inputs"]["image"]=json!("uploaded.png");
+        assert_eq!(validate_submission_fidelity(&source,&submitted,false,false).unwrap(),vec!["122.image"]);
+        submitted["3"]["inputs"]["seed"]=json!(42);
+        assert!(validate_submission_fidelity(&source,&submitted,false,false).is_err());
+        assert!(validate_submission_fidelity(&source,&submitted,true,false).is_err());
+        assert!(validate_submission_fidelity(&source,&submitted,true,true).is_ok());
+        submitted["285"]["inputs"]["mesh"]=json!(["303",0]);
+        assert!(validate_submission_fidelity(&source,&submitted,true,true).is_err());
+    }
+    #[test] fn prevent_pruned_output_workflow() {
+        let source=builtin_api("pixal3d-fox").unwrap();
+        let mut sub=source.clone();
+        sub.as_object_mut().unwrap().remove("323");
+        assert!(validate_submission_fidelity(&source,&sub,false,false).is_err());
+    }
+    #[test] fn extraction_of_comfy_execution_error() {
         let entry=json!({"status":{"messages":[["execution_error",{
             "node_id":"322","node_type":"Save3DAdvanced","exception_message":"viewport invalid"
         }]]}});
-        let result=history_failure_detail(&entry);
-        assert!(result.contains("#322"));
-        assert!(result.contains("viewport invalid"));
-    }
-    #[test] fn ignores_path_traversal() {
-        let mut hits=vec![];gather_glb(&json!({"filename":"../bad.glb","type":"output"}),&mut hits);
-        assert!(hits.is_empty());
+        let message=history_failure_detail(&entry);
+        assert!(message.contains("#322"));
+        assert!(message.contains("viewport invalid"));
     }
 }

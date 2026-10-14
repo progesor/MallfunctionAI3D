@@ -110,6 +110,49 @@ impl StudioState {
         rows.map(|row|row.map_err(ioerr)).collect()
     }
 
+    /// Soft-delete: move only a Studio-owned asset directory to our trash.
+    /// This never deletes external input GLBs and allows manual recovery.
+    pub fn trash_asset(&self, id: &str) -> StudioResult<PathBuf> {
+        Uuid::parse_str(id).map_err(|_|"Geçersiz asset kimliği".to_owned())?;
+        let asset=self.asset_by_id(id)?;
+        let source=Path::new(&asset.file_path);
+        let folder=source.parent().ok_or("Arşiv yolu geçersiz")?;
+        // Validate structural ownership, including the stored original filename.
+        if source.file_name().and_then(|x|x.to_str())!=Some("original.glb")
+            || folder.file_name().and_then(|x|x.to_str())!=Some(id)
+            || folder.parent().and_then(|p|p.file_name()).and_then(|x|x.to_str())!=Some("assets") {
+            return Err("Yalnızca Studio arşivinin kendi GLB kopyaları kaldırılabilir.".into());
+        }
+        let canonical=folder.canonicalize().map_err(|e|e.to_string())?;
+        let assets_parent=folder.parent().ok_or("Arşiv kökü geçersiz")?.canonicalize().map_err(|e|e.to_string())?;
+        if canonical.parent()!=Some(assets_parent.as_path()) || !canonical.join("original.glb").is_file() {
+            return Err("Arşiv kaynak dosyası doğrulanamadı.".into());
+        }
+        let root=assets_parent.parent().ok_or("Arşiv üst klasörü geçersiz")?;
+        let trash=root.join("trash");
+        fs::create_dir_all(&trash).map_err(|e|e.to_string())?;
+        let destination=trash.join(id);
+        if destination.exists() {return Err("Çöp arşivinde aynı asset mevcut; üzerine yazılmıyor.".into());}
+        fs::rename(&canonical,&destination).map_err(|e|format!("Çöp arşivine taşınamadı: {e}"))?;
+        let result=(|| -> StudioResult<()> {
+            let mut db=self.db.lock().map_err(ioerr)?;
+            let tx=db.transaction().map_err(ioerr)?;
+            tx.execute("UPDATE jobs SET asset_id=NULL WHERE asset_id=?1",params![id]).map_err(ioerr)?;
+            if tx.execute("DELETE FROM assets WHERE id=?1",params![id]).map_err(ioerr)?!=1 {
+                return Err("Asset veritabanı kaydı bulunamadı.".into());
+            }
+            tx.commit().map_err(ioerr)?;
+            Ok(())
+        })();
+        if let Err(error)=result {
+            if let Err(restore_error)=fs::rename(&destination,&canonical) {
+                return Err(format!("Veritabanı işlemi başarısız: {error}. Çöp klasöründen geri taşıma da başarısız: {restore_error}. Dosya: {}",destination.display()));
+            }
+            return Err(error);
+        }
+        Ok(destination)
+    }
+
     pub fn store_asset(&self, content: &[u8], title: &str, engine: &str, provenance: Value) -> StudioResult<Asset> {
         if content.len() > 250_000_000 { return Err("GLB 250 MB üst sınırını aşıyor.".into()); }
         let (tris,verts,mats,tex)=inspect_glb(content)?;

@@ -21,6 +21,8 @@ pub fn run() {
             commands::list_assets,
             commands::import_model_file,
             commands::read_asset_glb,
+            commands::read_reference_preview,
+            commands::move_asset_to_trash,
             commands::get_asset_manifest,
             commands::gpu_snapshot,
             comfy::get_workflows,
