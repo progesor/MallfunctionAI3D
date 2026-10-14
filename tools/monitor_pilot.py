@@ -110,9 +110,12 @@ def main():
     ap.add_argument('--seconds',type=int,default=1800)
     ap.add_argument('--interval',type=float,default=2.0)
     ap.add_argument('--gpu-index',type=int,default=None)
+    ap.add_argument('--station',default='unspecified',help='Workstation label: e.g. 4070ti-super or 5080')
     ap.add_argument('--out',type=Path,default=root/'reports')
     ap.add_argument('--no-queue',action='store_true',help='Sample for full period without waiting for ComfyUI queue')
     args=ap.parse_args()
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,48}',args.station):
+        ap.error('station must contain 1-48 ASCII letters, digits, underscores, or hyphens')
     if args.seconds < 1 or args.interval < 0.5:
         ap.error('seconds must be >=1; interval must be >= 0.5')
     args.out.mkdir(parents=True,exist_ok=True)
@@ -125,7 +128,7 @@ def main():
             print('ERROR: ComfyUI queue API is inaccessible:',err,file=sys.stderr)
             print('Check the -ComfyUrl address and Docker published port before measuring.',file=sys.stderr)
             return 2
-    fields=['timestamp_local','elapsed_seconds','comfy_running','comfy_pending','queue_error','gpu_index',
+    fields=['station','timestamp_local','elapsed_seconds','comfy_running','comfy_pending','queue_error','gpu_index',
             'gpu_name','vram_total_mib','vram_used_mib','gpu_util_percent','temperature_c',
             'power_w','host_ram_total_mib','host_ram_used_mib','warning']
     initial=time.monotonic();seen=False;firstbusy=None;lastbusy=None;idle_since=None;rows=[]
@@ -148,7 +151,8 @@ def main():
                     if idle_since is None: idle_since=elapsed
                 gpu=gpu_snapshot(smi,args.gpu_index)
                 total_ram,used_ram=windows_ram_mib()
-                row={'timestamp_local':dt.datetime.now().astimezone().isoformat(timespec='seconds'),
+                row={'station':args.station,
+                     'timestamp_local':dt.datetime.now().astimezone().isoformat(timespec='seconds'),
                      'elapsed_seconds':elapsed,'comfy_running':running,'comfy_pending':pending,
                      'queue_error':err,'host_ram_total_mib':total_ram,'host_ram_used_mib':used_ram}
                 row.update(gpu)
@@ -168,7 +172,8 @@ def main():
     def avgnum(key):
         v=[float(r[key]) for r in rows if isinstance(r.get(key),(float,int)) and math.isfinite(float(r[key]))]
         return round(statistics.mean(v),2) if v else None
-    report={'source':'real nvidia-smi / real local ComfyUI queue samples',
+    report={'station':args.station,
+            'source':'real nvidia-smi / real local ComfyUI queue samples',
             'created_local':dt.datetime.now().astimezone().isoformat(), 'comfy_url':args.url,
             'gpu_command':str(smi) if smi else None,'queue_observed':seen,
             'queue_first_active_sec':firstbusy,'queue_last_active_sec':lastbusy,
