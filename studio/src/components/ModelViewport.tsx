@@ -81,7 +81,7 @@ export function ModelViewport({ base64, title, busy, expanded=false, onToggleExp
               <Icon size={14} /><span>{label}</span>
             </button>
           ))}
-          {onToggleExpanded && <button type="button" className="view-button expand-viewport" aria-label={expanded ? 'Görünümü küçült' : 'Görünümü büyüt'} title={expanded ? 'Görünümü küçült' : 'Görünümü tam genişlikte aç'} onClick={onToggleExpanded}>{expanded ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}</button>
+          {onToggleExpanded && <button type="button" className="view-button expand-viewport" aria-label={expanded ? 'Görünümü küçült' : 'Görünümü büyüt'} title={expanded ? 'Görünümü küçült' : 'Görünümü tam genişlikte aç'} onClick={onToggleExpanded}>{expanded ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}</button>}
         </div>
       </div>
       <div className="viewport-canvas">
