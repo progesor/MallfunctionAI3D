@@ -76,3 +76,9 @@ Bkz: `docs/AI3D_STUDIO_M1_2_FIDELITY_UX_2026-10-14.md`.
 - Üst başlık ve iş takip kartı sadeleştirildi; referans ve arşiv kontrolleri korundu.
 - Gerçek React arayüzünü farklı pencere boyutlarında test eden Playwright kontrolleri eklendi (`npm run test:ui`). CI Windows üzerinde React/Vite ve Rust kontrolleriyle birlikte çalışır.
 - **Workflow aynen** üretim yolu, model seed'leri, ComfyUI ayarları, arşiv ve Blender pipeline değişmedi. UI kontrolü için tekrar GPU üretimi yapılmasına gerek yok.
+
+## M2 — PBR Texture Inspector (ilk aşama)
+
+Mevcut varlığı **Model Arşivi** üzerinden seçtikten sonra sağdaki **Model Bilgileri → PBR Texture Inspector** bölümünde GLB'ye gömülü gerçek PBR haritaları açılır. Base Color ve Normal orijinal renkli görünür; Roughness (G), Metallic (B), AO (R) packed haritadan gri kanal olarak ayrılır. Kartı tıklayarak haritayı büyük açabilir, **Packed orijinali göster** seçeneğiyle karşılaştırabilirsin. Birden fazla materyal varsa materyal seçici görüntülenir.
+
+Bu aşamada texture düzeltme, yeniden bake veya sıkıştırma yapmıyoruz; **kaynak GLB her zaman korunur**. Referans üretim/ComfyUI workflow davranışı, Blender LOD ve M1.3 tam ekran görünümü değiştirilmedi. Kontrol adımları `docs/TEXTURE_INSPECTOR.md` içinde.

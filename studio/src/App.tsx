@@ -15,6 +15,7 @@ import type { ProductionMode } from './lib/api-workflow';
 import { STUDIO_MODULES } from './lib/modules';
 import type { ModuleKind } from './lib/modules';
 import { ModelViewport } from './components/ModelViewport';
+import { TextureInspector } from './components/TextureInspector';
 import './styles/app.css';
 
 const initialSettings: Settings = {
@@ -393,6 +394,7 @@ function App() {
             <span className="section-label">SELECTED MODEL</span><h3>{selectedAsset.title}</h3>
             <div className="asset-meta"><span>{selectedAsset.engine}</span><span>{shortDate(selectedAsset.createdAt)}</span></div>
             <div className="stats-grid"><Metric label="TRIANGLES" value={selectedAsset.triangleCount.toLocaleString('en-US')}/><Metric label="VERTICES" value={selectedAsset.vertexCount.toLocaleString('en-US')}/><Metric label="MATERIALS" value={String(selectedAsset.materialCount)}/><Metric label="GLB SIZE" value={formatBytes(selectedAsset.fileSize)}/></div>
+            <TextureInspector glbBase64={glb} assetTitle={selectedAsset.title} />
             <div className="meta-row"><span>SHA256</span><code title={selectedAsset.sha256}>{selectedAsset.sha256.slice(0, 16)}…</code></div>
             <div className="meta-row"><span>Station</span><strong>{selectedAsset.station}</strong></div>
             <button type="button" className="btn btn-danger-subtle btn-full" onClick={()=>setAssetPendingDeletion(selectedAsset)}><Trash2 size={15}/> Arşivden kaldır</button>

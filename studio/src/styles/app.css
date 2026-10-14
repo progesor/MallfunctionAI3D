@@ -350,3 +350,40 @@ button { transition: background-color .14s ease, color .14s ease, border-color .
   .system-panel { padding-top: 10px; padding-bottom: 10px; }
   .gpu-name { margin: 7px 0; }
 }
+
+/* M2: embedded PBR map inspection (scoped; production/viewport layout unchanged). */
+.texture-inspector { margin: 18px 0 15px; padding: 13px 0 16px; border-top: 1px solid #354d5b; border-bottom: 1px solid #354d5b; }
+.texture-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 9px; min-width: 0; margin-bottom: 12px; }
+.texture-section-heading > div { display: inline-flex; align-items: center; gap: 7px; min-width: 0; color: #7dcead; }
+.texture-section-heading strong { color: #e5f5ef; font-size: 11.5px; font-weight: 750; }
+.texture-summary { color: #8daab6; font-size: 9.5px; text-align: right; flex-shrink: 0; }
+.texture-material-field { display: grid; gap: 7px; margin: 12px 0; }
+.texture-material-field > span:first-child { color: #a0b4c0; font-size: 9px; letter-spacing: .09em; font-weight: 750; }
+.texture-material-field .select-wrap { position: relative; display: block; }
+.texture-material-field select { width: 100%; height: 32px; padding: 0 26px 0 10px; border: 1px solid #3e5a69; border-radius: 7px; color: #e3eef1; background: #1b3644; font-size: 11px; appearance: none; }
+.texture-material-field .select-wrap > svg { position: absolute; right: 10px; top: 9px; pointer-events: none; color: #9bb9c1; }
+.texture-map-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.texture-map-card { display: flex; flex-direction: column; align-items: stretch; padding: 6px 6px 9px; min-width: 0; text-align: left; border: 1px solid #355361; border-radius: 9px; background: #1a3341; color: #cfe3ea; transition: border-color .15s, background .15s; }
+.texture-map-card:hover:not(:disabled), .texture-map-card:focus-visible { background: #224b44; border-color: #68cfa2; }
+.texture-map-card:disabled { opacity: .55; cursor: progress; }
+.texture-map-thumb { display: grid; place-items: center; aspect-ratio: 1 / 1; min-width: 0; overflow: hidden; border: 1px solid #2f4b56; border-radius: 5px; background: repeating-conic-gradient(#314753 0 25%, #243744 0 50%) 0/18px 18px; color: #8faebc; }
+.texture-map-thumb img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.texture-map-title { display: block; padding: 9px 2px 2px; font-size: 11px; font-weight: 740; }
+.texture-map-meta { display: block; padding: 0 2px; color: #97b3bf; font-size: 9.5px; font-variant-numeric: tabular-nums; }
+.texture-inspector-note { margin: 11px 0 0; color: #90acba; font-size: 10px; line-height: 1.55; }
+.texture-inspector-error { margin: 10px 0; padding: 9px; border: 1px solid #965967; border-radius: 7px; color: #ffc9c8; background: #4b303d; font-size: 10px; overflow-wrap: anywhere; }
+.texture-inspector-loading, .texture-inspector-empty { display: block; margin: 13px 0 6px; font-size: 11px; color: #9ab6c4; line-height: 1.6; }
+.texture-lightbox { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 28px; z-index: 1100; background: #060d13eb; backdrop-filter: blur(8px); }
+.texture-lightbox-panel { display: flex; flex-direction: column; width: min(900px, 100%); max-height: 94dvh; border: 1px solid #577c81; border-radius: 13px; overflow: hidden; background: #172c38; box-shadow: 0 26px 100px #000b; }
+.texture-lightbox-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 16px 18px; border-bottom: 1px solid #37505c; }
+.texture-lightbox-head h3 { margin: 5px 0 0; font-size: 15px; line-height: 1.4; color: #eef9f4; }
+.texture-lightbox-image { display: flex; align-items: center; justify-content: center; min-height: 0; flex: 1; padding: 12px; overflow: auto; background: repeating-conic-gradient(#303c48 0 25%, #192832 0 50%) 0/24px 24px; }
+.texture-lightbox-image img { display: block; object-fit: contain; max-width: 100%; max-height: min(69dvh, 820px); image-rendering: auto; }
+.texture-lightbox-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 18px; color: #b7d0d6; font-size: 11px; }
+.texture-lightbox-foot > span { display: inline-flex; align-items: center; gap: 8px; }
+.texture-packed-toggle { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; color: #acebc9; }
+.texture-packed-toggle input { accent-color: #5ccc9e; }
+@media (max-width: 700px) {
+  .texture-lightbox { padding: 8px; }
+  .texture-lightbox-foot { flex-wrap: wrap; }
+}

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
-    "test:adapter": "node --experimental-strip-types src/tests/workflow.test.mjs && node --experimental-strip-types src/tests/pilot.test.mjs && node --experimental-strip-types src/tests/api-workflow.test.mjs",
+    "test:adapter": "node --experimental-strip-types src/tests/workflow.test.mjs && node --experimental-strip-types src/tests/pilot.test.mjs && node --experimental-strip-types src/tests/api-workflow.test.mjs && node --experimental-strip-types --test src/tests/glb-inspector.test.mjs",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
