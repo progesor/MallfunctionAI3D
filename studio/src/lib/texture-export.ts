@@ -1,6 +1,6 @@
 /** Non-destructive PBR map export. Pure resizing is testable without a DOM. */
 import type { EmbeddedTexture, TextureMap, TextureRole } from './glb-inspector';
-import { encodeRgbaPng } from './png-encode';
+import { encodeRgbaPng } from './png-encode.ts';
 
 export type TexturePreset = 'source' | '1024' | '512' | '256';
 export type TextureExportFile = {
