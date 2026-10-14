@@ -45,7 +45,7 @@ fn u64_at(v:&Value, key:&str) -> StudioResult<u64> {
     v.get(key).and_then(Value::as_u64).ok_or_else(|| format!("GLB sayısal alanı geçersiz: {key}"))
 }
 
-fn parse_glb(src:&[u8]) -> StudioResult<(Value,&[u8])> {
+pub(crate) fn parse_glb(src:&[u8]) -> StudioResult<(Value,&[u8])> {
     if src.len()<28 || src.len()>MAX_GLB || &src[..4]!=b"glTF" {return Err("GLB 2.0 dosyası geçersiz".into());}
     if u32::from_le_bytes(src[4..8].try_into().unwrap())!=2 || u32::from_le_bytes(src[8..12].try_into().unwrap()) as usize!=src.len() {
         return Err("GLB sürümü veya toplam boyutu geçersiz".into());
@@ -158,7 +158,7 @@ pub fn geometry_only_glb(src:&[u8]) -> StudioResult<(Vec<u8>,u64)> {
     Ok((out,triangles))
 }
 
-fn png_map(dir:&Path, manifest:&Value, name:&str) -> StudioResult<RgbaImage> {
+pub(crate) fn png_map(dir:&Path, manifest:&Value, name:&str) -> StudioResult<RgbaImage> {
     let entries=get_arr(manifest,"maps")?;
     let row=entries.iter().find(|v|v.get("filename").and_then(Value::as_str)==Some(name))
         .ok_or_else(||format!("Texture Export içindeki harita eksik: {name}"))?;
@@ -201,19 +201,19 @@ fn pack_urp(metal:&RgbaImage, rough:&RgbaImage, ao:&RgbaImage, metallic_factor:f
     }
     Ok((metal_smooth,occlusion))
 }
-fn png_bytes(img:&RgbaImage) -> StudioResult<Vec<u8>> {
+pub(crate) fn png_bytes(img:&RgbaImage) -> StudioResult<Vec<u8>> {
     let mut target=Cursor::new(Vec::new());
     DynamicImage::ImageRgba8(img.clone()).write_to(&mut target,ImageFormat::Png)
         .map_err(|e|e.to_string())?;
     Ok(target.into_inner())
 }
-fn sum_sha(bytes:&[u8]) -> String {format!("{:x}",Sha256::digest(bytes))}
-fn read_json(path:&Path) -> StudioResult<Value> {
+pub(crate) fn sum_sha(bytes:&[u8]) -> String {format!("{:x}",Sha256::digest(bytes))}
+pub(crate) fn read_json(path:&Path) -> StudioResult<Value> {
     let raw=fs::read(path).map_err(|e|e.to_string())?;
     if raw.len()>512_000 {return Err("Manifest boyutu çok büyük".into());}
     serde_json::from_slice(&raw).map_err(|e|e.to_string())
 }
-fn existing_lod_dir(asset_dir:&Path, asset_id:&str) -> StudioResult<PathBuf> {
+pub(crate) fn existing_lod_dir(asset_dir:&Path, asset_id:&str) -> StudioResult<PathBuf> {
     let root=asset_dir.join("lods").canonicalize().map_err(|_|"Bu asset için LOD üretimi henüz yapılmamış")?;
     let latest=read_json(&root.join("latest.json"))?;
     if latest.get("assetId").and_then(Value::as_str)!=Some(asset_id) {return Err("LOD asset kimliği uyuşmuyor".into());}
@@ -223,7 +223,7 @@ fn existing_lod_dir(asset_dir:&Path, asset_id:&str) -> StudioResult<PathBuf> {
     if !dir.join("Blender_LOD_Report.json").is_file(){return Err("Blender LOD raporu bulunamadı".into());}
     Ok(dir)
 }
-fn existing_texture_dir(asset_dir:&Path, asset_id:&str, original_sha:&str, supplied:&str) -> StudioResult<(PathBuf,Value)> {
+pub(crate) fn existing_texture_dir(asset_dir:&Path, asset_id:&str, original_sha:&str, supplied:&str) -> StudioResult<(PathBuf,Value)> {
     let exports=asset_dir.join("texture_exports").canonicalize().map_err(|_|"Önce Texture Export oluştur")?;
     let p=PathBuf::from(supplied).canonicalize().map_err(|_|"Seçili texture export klasörü bulunamadı")?;
     if p.parent()!=Some(exports.as_path()) || !p.file_name().and_then(|x|x.to_str()).is_some_and(|s|s.starts_with("pbr_")) {
