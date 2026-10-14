@@ -441,3 +441,14 @@ button { transition: background-color .14s ease, color .14s ease, border-color .
 .unity-export-history > button {display:flex;justify-content:space-between;align-items:center;min-width:0;gap:5px;border:1px solid #385d51;background:#142c30;border-radius:6px;padding:7px 8px;color:#bcddcd;font-size:9px;text-align:left;}
 .unity-export-history > button > span {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .unity-export-history > button:hover {background:#1a4439;}
+
+/* Unity-native delivery: only a compact addition to the existing export inspector. */
+.unity-native-export { display: grid; gap: 9px; padding: 12px; margin: 12px 0;
+  border: 1px solid rgba(144, 187, 219, .2); border-radius: 10px;
+  background: rgba(36, 72, 100, .1); }
+.unity-native-export > strong { font-size: .91rem; }
+.unity-native-export .unity-export-description { margin: 0; }
+.unity-native-project, .unity-native-result { display: grid; gap: 4px; min-width: 0; }
+.unity-native-project span, .unity-native-result small { overflow-wrap: anywhere; font-size: .76rem; }
+.unity-native-project small { opacity: .75; }
+.unity-native-result p { margin: 0; line-height: 1.5; }

@@ -20,6 +20,8 @@ jobs:
       - name: Install frontend dependencies
         working-directory: studio
         run: npm install --no-audit --no-fund
+      - name: Unity FBX Blender worker Python syntax
+        run: python -m py_compile blender/export_unity_fbx.py
       - name: Workflow converter tests
         working-directory: studio
         run: npm run test:adapter

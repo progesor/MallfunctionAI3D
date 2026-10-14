@@ -30,6 +30,8 @@ async function start(page:import('@playwright/test').Page, ready:boolean) {
   await page.addInitScript(({model,asset,lod,ready})=>{
     const calls: unknown[]=[];
     (window as unknown as {__unityCalls:unknown[]}).__unityCalls=calls;
+    const nativeCalls: unknown[] = [];
+    (window as unknown as {__nativeCalls:unknown[]}).__nativeCalls=nativeCalls;
     (window as unknown as {__TAURI_INTERNALS__:unknown}).__TAURI_INTERNALS__={invoke:async(cmd:string,args?:Record<string,unknown>)=>{
       switch(cmd){
         case 'get_environment':return {settings:{comfyUrl:'http://127.0.0.1:8191',station:'5080',blenderPath:'',libraryRoot:''},appDataPath:'C:\\Test',detectedBlender:null,source:'local'};
@@ -42,6 +44,10 @@ async function start(page:import('@playwright/test').Page, ready:boolean) {
         case 'list_asset_texture_exports':return ready?[{outputDir:'C:\\Test\\library\\assets\\fox-test\\texture_exports\\pbr-test',preset:'512',generatedAt:'2026-10-14T23:00:00+03:00',mapCount:5}]:[];
         case 'list_unity_exports':return [];
         case 'export_unity_urp':calls.push(args);return {outputDir:'C:\\Test\\gamepack',manifestPath:'C:\\Test\\gamepack\\unity_asset_manifest.json',lodTriangles:[7998,5000,3000],sourceLodBytes:9379404,geometryLodBytes:553296,sharedTextureBytes:500000,sourceUntouched:true};
+        case 'plugin:dialog|open':return 'C:\\Test\\UnityProject';
+        case 'inspect_unity_project':return {projectPath:'C:\\Test\\UnityProject',editorVersion:'6000.0.62f1',pipeline:'URP',urpInstalled:true,hdrpInstalled:false,activePipelineVerified:false};
+        case 'export_unity_native':nativeCalls.push(args);return {outputDir:'C:\\Test\\native',unityFolder:'C:\\Test\\UnityProject\\Assets\\MallfunctionAI3D\\Imported\\fox-test\\v1',manifestPath:'C:\\Test\\native\\unity_asset_manifest.json',pipeline:'URP',lodTriangles:[7998,5000,3000],status:'STAGED_PENDING_UNITY_EDITOR',sourceUntouched:true};
+        case 'check_unity_import':return {status:'UnityPrefabReady',prefabPath:'Assets/MallfunctionAI3D/Imported/fox-test/v1/Prefabs/fox-test.prefab',message:null};
         default: throw new Error('Mocked IPC unavailable: '+cmd);
       }
     }};
@@ -71,5 +77,20 @@ test('Unity staging command references selected owned asset and texture version'
   const calls=await page.evaluate(()=>(window as unknown as {__unityCalls:unknown[]}).__unityCalls);
   expect(calls).toHaveLength(1);
   expect(calls[0]).toEqual({assetId:'fox-test',textureExportDir:'C:\\Test\\library\\assets\\fox-test\\texture_exports\\pbr-test'});
+  await expect(page.locator('.viewport-frame')).toBeVisible();
+});
+
+test('Native one-click Unity export selects a project and checks the actual importer report',async({page})=>{
+  await page.setViewportSize({width:1480,height:920});
+  await start(page,true);
+  await page.getByTestId('unity-project-button').click();
+  await expect(page.getByText(/6000.0.62f1/)).toBeVisible();
+  await expect(page.getByTestId('unity-native-export-button')).toBeEnabled();
+  await page.getByTestId('unity-native-export-button').click();
+  await expect(page.getByTestId('unity-native-result')).toBeVisible();
+  await expect(page.getByText(/Unity prefab hazır:/)).toBeVisible();
+  const calls=await page.evaluate(()=>(window as unknown as {__nativeCalls:unknown[]}).__nativeCalls);
+  expect(calls).toEqual([{assetId:'fox-test',textureExportDir:'C:\\Test\\library\\assets\\fox-test\\texture_exports\\pbr-test',
+    unityProjectPath:'C:\\Test\\UnityProject',profile:'Auto'}]);
   await expect(page.locator('.viewport-frame')).toBeVisible();
 });

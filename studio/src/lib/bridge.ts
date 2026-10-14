@@ -59,6 +59,20 @@ export interface UnityExportResult {
   sourceUntouched: boolean;
 }
 export interface UnityExportSummary { outputDir: string; generatedAt: string; triangles: [number, number, number] }
+export type UnityPipeline = 'Auto' | 'URP' | 'HDRP';
+export interface UnityProjectInfo {
+  projectPath: string; editorVersion: string; pipeline: string;
+  urpInstalled: boolean; hdrpInstalled: boolean; activePipelineVerified: boolean;
+}
+export interface NativeUnityResult {
+  outputDir: string; unityFolder: string; manifestPath: string;
+  pipeline: 'URP' | 'HDRP'; lodTriangles: [number, number, number];
+  status: 'STAGED_PENDING_UNITY_EDITOR'; sourceUntouched: boolean;
+}
+export interface UnityImportStatus {
+  status: 'STAGED_PENDING_UNITY_EDITOR' | 'UnityPrefabReady' | 'ImportFailed';
+  prefabPath: string | null; message: string | null;
+}
 export interface TextureExportResult { outputDir: string; manifestPath: string; files: Array<{ filename: string; role: string; width: number; height: number; fileBytes: number; sha256: string }>; sourceUntouched: boolean };
 
 export const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -85,6 +99,11 @@ export const bridge = {
   textureExports: (assetId: string) => invoke<TextureExportSummary[]>('list_asset_texture_exports', { assetId }),
   exportUnityUrp: (assetId: string, textureExportDir: string) => invoke<UnityExportResult>('export_unity_urp', { assetId, textureExportDir }),
   unityExports: (assetId: string) => invoke<UnityExportSummary[]>('list_unity_exports', { assetId }),
+  inspectUnityProject: (unityProjectPath: string) => invoke<UnityProjectInfo>('inspect_unity_project', { projectPath: unityProjectPath }),
+  exportUnityNative: (assetId: string, textureExportDir: string, unityProjectPath: string, profile: UnityPipeline) =>
+    invoke<NativeUnityResult>('export_unity_native', { assetId, textureExportDir, unityProjectPath, profile }),
+  checkUnityImport: (assetId: string, outputDir: string) =>
+    invoke<UnityImportStatus>('check_unity_import', { assetId, outputDir }),
   referencePreview: (path: string) => invoke<string>('read_reference_preview', { path }),
   trashAsset: (assetId: string) => invoke<string>('move_asset_to_trash', { assetId }),
   generateLods: (assetId: string) => invoke<LodResult>('blender_generate_lods', { assetId }),
@@ -96,6 +115,7 @@ export const bridge = {
   pickApiWorkflow: () => open({ multiple: false, directory: false, filters: [{ name: 'ComfyUI API Workflow', extensions: ['json'] }] }),
   pickBlender: () => open({ multiple: false, directory: false, filters: [{ name: 'Blender executable', extensions: ['exe'] }] }),
   pickArchive: () => open({ multiple: false, directory: true }),
+  pickUnityProject: () => open({ multiple: false, directory: true }),
 };
 
 export function formatBytes(bytes: number): string {

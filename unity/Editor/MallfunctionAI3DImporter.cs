@@ -20,6 +20,14 @@ public sealed class MallfunctionAI3DImporter : AssetPostprocessor
     private static readonly HashSet<string> Pending = new HashSet<string>();
     private static bool importing;
 
+    // A new Unity project can import the marker before this Editor script has
+    // finished compiling. Rescan on every domain reload, not just file events.
+    [InitializeOnLoadMethod]
+    private static void ResumeAfterDomainReload()
+    {
+        EditorApplication.delayCall += ImportAll;
+    }
+
     [Serializable] private sealed class SourceFile { public string path; public string sha256; }
     [Serializable] private sealed class Geometry
     {

@@ -5,6 +5,7 @@ mod models;
 mod storage;
 mod texture_export;
 mod unity_export;
+mod unity_native;
 
 use tauri::Manager;
 
@@ -27,6 +28,9 @@ pub fn run() {
             texture_export::list_asset_texture_exports,
             unity_export::export_unity_urp,
             unity_export::list_unity_exports,
+            unity_native::inspect_unity_project,
+            unity_native::export_unity_native,
+            unity_native::check_unity_import,
             commands::read_reference_preview,
             commands::move_asset_to_trash,
             commands::get_asset_manifest,
