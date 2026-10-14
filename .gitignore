@@ -5,6 +5,7 @@ upstream/*
 !upstream/official_pixal3d_trellis2.json
 workflows/*
 !workflows/.gitkeep
+!workflows/PLAYBOX_FoxPlush_pixal3d_api_v01.json
 !workflows/Mallfunction_PLAYBOX_FoxPlush_*_pilot_v01.json
 !workflows/Mallfunction_PLAYBOX_FoxPlush_*_pilot_v01.audit.json
 references/*.png
