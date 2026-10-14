@@ -51,7 +51,7 @@ export function readGlbChunks(bytes: Uint8Array): { json: Record<string, unknown
   }
   let cursor = 12;
   let json: Record<string, unknown> | null = null;
-  let bin = new Uint8Array(0);
+  let bin: Uint8Array = new Uint8Array(0);
   while (cursor + 8 <= bytes.length) {
     const size = uint32(bytes, cursor);
     const type = uint32(bytes, cursor + 4);
