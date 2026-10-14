@@ -102,14 +102,14 @@ GLB denetimi: mesh/üçgen, UV (`TEXCOORD_0`), normal, materyal sayısı, gömü
 ```powershell
 cd C:\Works\MallfunctionAI3D
 git pull
-.\04_Prepare-LODs.ps1 -DryRun
-.\04_Prepare-LODs.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\04_Prepare-LODs.ps1 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\04_Prepare-LODs.ps1
 ```
 
 Blender otomatik bulunamazsa gerçek blender.exe yolunu ver (örnek, dosyanın gerçekten bulunduğunu doğrula):
 
 ```powershell
-.\04_Prepare-LODs.ps1 -BlenderPath "C:\Program Files\Blender Foundation\Blender 4.5\blender.exe"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\04_Prepare-LODs.ps1 -BlenderPath "C:\Program Files\Blender Foundation\Blender 4.5\blender.exe"
 ```
 
 Daha önceki bir testin üzerine yazmamak için çıktı klasörü tarih/saat eklenerek oluşturulur. Tam log `reports/FoxBlenderTest_*/Blender_Run.log` içine kaydedilir. Kaynak GLB değişmez; LOD görsel kabulü ayrıca gereklidir.
