@@ -1,0 +1,12 @@
+reports/*
+!reports/.gitkeep
+upstream/*
+!upstream/.gitkeep
+workflows/*
+!workflows/.gitkeep
+references/*.png
+references/*.jpg
+references/*.jpeg
+references/*.webp
+__pycache__/
+*.pyc

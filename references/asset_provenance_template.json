@@ -1,0 +1,21 @@
+{
+  "asset_id": "PLAYBOX_FoxPlush",
+  "project": "Mallfunction",
+  "category": "toy_plush",
+  "source_reference_local_path": null,
+  "source_reference_sha256": null,
+  "source_reference_rights_notes": "Use the original prior Meshy fox plush design; verify provenance",
+  "source_meshey_baseline_glb": null,
+  "engine": null,
+  "model_weights_version": null,
+  "workflow_name": null,
+  "generated_glb": null,
+  "glb_sha256": null,
+  "texture_px": 1024,
+  "lod_targets_triangles": [8000, 5000, 3000],
+  "actual_peak_gpu_vram_mib": null,
+  "actual_run_seconds": null,
+  "blender_review": "pending",
+  "unity_review": "pending",
+  "production_approved": false
+}

@@ -1,0 +1,6 @@
+The authentic PLAYBOX Fox Plush image from the prior Meshy run is required.
+It was not among the files supplied in this conversation.
+Do not substitute Mallfunction character turnaround/worker artwork.
+Use this image in ComfyUI > LoadImage and save the file hash separately:
+  Get-FileHash "C:\path\to\original_fox_reference.png" -Algorithm SHA256
+The pilot workflow placeholder filename is PLAYBOX_FoxPlush_reference.png.
