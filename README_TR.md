@@ -12,7 +12,7 @@
 
 - 15:24 ve 15:27 tarihli denetimlerde Pixal3D/TRELLIS.2 için 7 modelin tümü görünür; **yükleme veya başarılı 3D üretim henüz kanıtlanmadı**.
 - Gerçek GPU RTX **4070 Ti SUPER**, önceki RTX 5080 varsayımını kullanma. NVIDIA raporları 4818 ve 5013 MiB anlık kullanım gösterdi (üretim benchmark'ı değildir).
-- Eski `all_available_node_types.txt` dosyasında yalnızca `Length` bulunduğu için 0/29 node sonucu **geçersizdir**. `git pull` ardından v0.1.2 `01_Inspect-ComfyUI.ps1` betiğini **bir kez** yeniden çalıştırıp yeni ZIP raporunu paylaş. Yeni raporda `required_nodes.json` içinde `status=present/missing/unknown` alanı bulunur.
+- Eski `all_available_node_types.txt` dosyasında yalnızca `Length` bulunduğu için 0/29 node sonucu **geçersizdir**. `git pull` ardından v0.1.2 `01_Inspect-ComfyUI.ps1` betiğini **bir kez** yeniden çalıştırıp yeni ZIP raporunu paylaş. Yeni rapor resmî grafın 43 çalıştırılabilir node türünü kontrol eder (UI not düğümleri hariç). `required_nodes.json` içinde `status=present/missing/unknown` alanı bulunur.
 - Gerçekten eksik node yoksa, orijinal PLAYBOX Fox Plush PNG'sini ComfyUI LoadImage'a yükleyip **yalnız Pixal3D** workflow'unu aç. VRAM logger çalışırken ilk üretimi başlat. Model ağırlığı indirme veya ComfyUI güncellemesi **gerekmiyor**.
 - Denetimin özet kaydı: `docs/AI3D_AUDIT_2026-10-14.md` (ham ve özel raporlar GitHub'a eklenmedi).
 
@@ -32,7 +32,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\01_Inspect-ComfyUI.ps1 -Co
 
 Port farklıysa `-ComfyUrl` değiştir. Betik ComfyUI API'sinden `/system_stats`, `/object_info`, `/models/*` verilerini okur, ayrıca `nvidia-smi`, Docker ve WSL envanterini alır. Bir komut mevcut değilse bunu raporlar ve diğer kontrollere devam eder. Modelleri veya node'ları değiştirmez. `reports/Comfy_Audit_<tarih>.zip` dosyasını geri paylaş. Ham rapor yerel dosya yollarını ve kurulu model isimlerini içerebilir; herkese açık yerlere yükleme.
 
-**İlk karar kapısı:** 29 temel node'un ve 7 ortak model ağırlığının durumu raporda netleşsin. Eksik olanları topluca indirme/güncelleme yapmadan birlikte değerlendireceğiz. Eğer API `localhost` üzerinden erişilemiyorsa önce Docker yayınlanan portunu belirleyeceğiz.
+**İlk karar kapısı:** resmî grafın 43 çalıştırılabilir node türünün ve 7 ortak model ağırlığının durumu raporda netleşsin. Eksik olanları topluca indirme/güncelleme yapmadan birlikte değerlendireceğiz. Eğer API `localhost` üzerinden erişilemiyorsa önce Docker yayınlanan portunu belirleyeceğiz.
 
 ## 2) Resmî workflow ve iki pilot kopyası GitHub'da hazır
 
