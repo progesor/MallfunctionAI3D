@@ -25,6 +25,8 @@ pub fn run() {
             commands::gpu_snapshot,
             comfy::get_workflows,
             comfy::get_workflow_json,
+            comfy::comfy_import_api_workflow,
+            comfy::comfy_job_diagnostics,
             comfy::comfy_health,
             comfy::comfy_node_info,
             comfy::comfy_upload_image,
