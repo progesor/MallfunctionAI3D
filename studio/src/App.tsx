@@ -276,7 +276,7 @@ function App() {
           <div className="bottom-workspace">
             <div className="log-card"><div className="card-heading"><div><Activity size={17}/><strong>Activity Monitor</strong></div><span className={job && ['running','queued','pending_result'].includes(job.status) ? 'live-status' : 'subdued'}>{job?.status.toUpperCase() || 'STANDBY'}</span></div>
               <p>{job ? job.message : 'Hazır · Arşivden GLB seç veya Pixal3D üretimini başlat.'}</p>
-              {job && ['failed','no_output'].includes(job.status) && <button className="job-debug" type="button" onClick={() => void showJobDiagnostics()}>Tanı Kaydı Görüntüle</button>
+              {job && ['failed','no_output'].includes(job.status) && <button className="job-debug" type="button" onClick={() => void showJobDiagnostics()}>Tanı Kaydı Görüntüle</button>}
               {job && <div className="job-bar"><div className={`job-bar-fill ${job.status === 'done' ? 'finished' : ''}`}/></div>}
               <div className="log-footer"><span><Command size={13}/> ComfyUI / Queue</span><span>{job?.promptId.slice(0, 8) || 'No active prompt'}</span></div>
             </div>
