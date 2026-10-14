@@ -1,10 +1,20 @@
-# Mallfunction — ComfyUI → Unity 3D Asset Pilot v0.1.1
+# Mallfunction — ComfyUI → Unity 3D Asset Pilot v0.1.2
 
 **Hazırlanma tarihi:** 2026-10-14  
-**Durum:** Araç paketi ve sentetik testler hazır. Kullanıcının PC'sindeki ComfyUI, RTX 5080, Blender ve gerçek fox-plush varlığı **henüz bu paketle çalıştırılmadı**.  
+**Durum:** ComfyUI Desktop denetimleri okundu (iki rapor, 14 Ekim 2026): v0.40.0, Windows 11, RTX 4070 Ti SUPER 16 GB, 64 GB RAM, 7/7 model adı API'de mevcut. v0.1.1 node testi hatalı 0/29 gösterdi; v0.1.2 düzeltmesinin Windows ortamında yeniden çalıştırılması gerekiyor. **Gerçek AI/Blender/Unity üretimi henüz yapılmadı.**  
 **v0.1.1 düzeltmesi:** Windows PowerShell 5.1 ortamında audit scriptinin `param()` içinden `$PSScriptRoot` kullanması nedeniyle oluşan `Join-Path` hatası giderildi. ComfyUI Desktop kullanıcısı için `-DockerContainer` verilmesi gerekmez.
+**v0.1.2 düzeltmesi:** PowerShell 5.1 `/object_info` yanıtını kimi ortamlarda nesne yerine `Length` özelliği üzerinden okuduğu için 0/29 yanlış negatifi oluştu. Artık HTTP JSON açıkça parse ediliyor; gerekirse `/object_info/{node_class}` tekil sorgularına düşüyor. Doğrulanamayan düğümler `unknown` olarak işaretleniyor, `missing` sayılmıyor.
 
 **Güvenlik ilkesi:** Var olan çalışan Docker/WSL/ComfyUI kurulumu ve kurulu model ağırlıkları değiştirilmez; model ağırlıkları indirilmez; workflow'lar yalnızca bu ayrı klasöre hazırlanır. Batch üretim **etkin değildir**.
+
+
+### İki gerçek denetimin sonucu ve bir sonraki adım (14 Ekim 2026)
+
+- 15:24 ve 15:27 tarihli denetimlerde Pixal3D/TRELLIS.2 için 7 modelin tümü görünür; **yükleme veya başarılı 3D üretim henüz kanıtlanmadı**.
+- Gerçek GPU RTX **4070 Ti SUPER**, önceki RTX 5080 varsayımını kullanma. NVIDIA raporları 4818 ve 5013 MiB anlık kullanım gösterdi (üretim benchmark'ı değildir).
+- Eski `all_available_node_types.txt` dosyasında yalnızca `Length` bulunduğu için 0/29 node sonucu **geçersizdir**. `git pull` ardından v0.1.2 `01_Inspect-ComfyUI.ps1` betiğini **bir kez** yeniden çalıştırıp yeni ZIP raporunu paylaş. Yeni raporda `required_nodes.json` içinde `status=present/missing/unknown` alanı bulunur.
+- Gerçekten eksik node yoksa, orijinal PLAYBOX Fox Plush PNG'sini ComfyUI LoadImage'a yükleyip **yalnız Pixal3D** workflow'unu aç. VRAM logger çalışırken ilk üretimi başlat. Model ağırlığı indirme veya ComfyUI güncellemesi **gerekmiyor**.
+- Denetimin özet kaydı: `docs/AI3D_AUDIT_2026-10-14.md` (ham ve özel raporlar GitHub'a eklenmedi).
 
 ## 1) Önce mevcut kurulumu incele
 
@@ -24,9 +34,11 @@ Port farklıysa `-ComfyUrl` değiştir. Betik ComfyUI API'sinden `/system_stats`
 
 **İlk karar kapısı:** 29 temel node'un ve 7 ortak model ağırlığının durumu raporda netleşsin. Eksik olanları topluca indirme/güncelleme yapmadan birlikte değerlendireceğiz. Eğer API `localhost` üzerinden erişilemiyorsa önce Docker yayınlanan portunu belirleyeceğiz.
 
-## 2) Resmî workflow'dan iki bağımsız pilot üret
+## 2) Resmî workflow ve iki pilot kopyası GitHub'da hazır
 
-Bu adımı denetimden sonra uygula. Aynı ZIP klasöründeki PowerShell:
+**Önerilen yol:** Repoda `upstream/official_pixal3d_trellis2.json` ve `workflows/Mallfunction_PLAYBOX_FoxPlush_{pixal3d,trellis2}_pilot_v01.json` dosyaları artık mevcut. `git pull` yapman yeterli. **Bu repoda `02_Prepare-Pilot.ps1` çalıştırma:** var olan workflow'ları korumak için üretici zaten üzerine yazmayı reddedecek.
+
+Script sadece workflow'ların henüz bulunmadığı bağımsız/boş bir kopyada kullanılabilir. Böyle bir kopyada PowerShell:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\02_Prepare-Pilot.ps1
