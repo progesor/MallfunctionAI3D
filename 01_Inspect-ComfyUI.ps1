@@ -1,12 +1,30 @@
-# Read-only inspection of local ComfyUI, Windows GPU, and Docker/WSL.
+# Read-only inspection of ComfyUI Desktop (also supports Docker/WSL), Windows GPU and installed models.
 # Does not download models, update packages, restart containers or change user files.
 [CmdletBinding()]
 param(
     [string]$ComfyUrl = 'http://127.0.0.1:8188',
     [string]$DockerContainer = '',
-    [string]$ReportRoot = (Join-Path $PSScriptRoot 'reports')
+    [string]$ReportRoot = ''
 )
 $ErrorActionPreference = 'Stop'
+# PowerShell 5.1 does not reliably initialize $PSScriptRoot inside param() defaults.
+# Resolve it only after the parameter binder has finished. Never touch the
+# ComfyUI installation; reports are always written to this pilot directory
+# (unless explicitly overridden with -ReportRoot).
+$bundleRoot = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($bundleRoot)) {
+    $scriptPath = $MyInvocation.MyCommand.Path
+    if (-not [string]::IsNullOrWhiteSpace($scriptPath)) {
+        $bundleRoot = Split-Path -Parent $scriptPath
+    }
+}
+if ([string]::IsNullOrWhiteSpace($bundleRoot)) {
+    $bundleRoot = (Get-Location).Path
+}
+if ([string]::IsNullOrWhiteSpace($ReportRoot)) {
+    $ReportRoot = Join-Path -Path $bundleRoot -ChildPath 'reports'
+}
+$ReportRoot = [System.IO.Path]::GetFullPath($ReportRoot)
 $ComfyUrl = $ComfyUrl.TrimEnd('/')
 $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
 $folder = Join-Path $ReportRoot ("Comfy_Audit_" + $stamp)
@@ -140,6 +158,6 @@ $summary | Set-Content -Path (Join-Path $folder 'SUMMARY.txt') -Encoding UTF8
 $zip = "$folder.zip"
 try {
     Compress-Archive -Path (Join-Path $folder '*') -DestinationPath $zip -CompressionLevel Optimal
-    Write-Host "\nAUDIT READY: $zip" -ForegroundColor Green
+    Write-Host "`nAUDIT READY: $zip" -ForegroundColor Green
 } catch { LogWarn "Zip failed; report folder still available: $folder" }
 $summary | ForEach-Object {Write-Host $_}

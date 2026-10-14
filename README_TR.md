@@ -1,7 +1,9 @@
-# Mallfunction — ComfyUI → Unity 3D Asset Pilot v0.1
+# Mallfunction — ComfyUI → Unity 3D Asset Pilot v0.1.1
 
 **Hazırlanma tarihi:** 2026-10-14  
 **Durum:** Araç paketi ve sentetik testler hazır. Kullanıcının PC'sindeki ComfyUI, RTX 5080, Blender ve gerçek fox-plush varlığı **henüz bu paketle çalıştırılmadı**.  
+**v0.1.1 düzeltmesi:** Windows PowerShell 5.1 ortamında audit scriptinin `param()` içinden `$PSScriptRoot` kullanması nedeniyle oluşan `Join-Path` hatası giderildi. ComfyUI Desktop kullanıcısı için `-DockerContainer` verilmesi gerekmez.
+
 **Güvenlik ilkesi:** Var olan çalışan Docker/WSL/ComfyUI kurulumu ve kurulu model ağırlıkları değiştirilmez; model ağırlıkları indirilmez; workflow'lar yalnızca bu ayrı klasöre hazırlanır. Batch üretim **etkin değildir**.
 
 ## 1) Önce mevcut kurulumu incele
