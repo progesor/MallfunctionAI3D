@@ -11,7 +11,7 @@
 | ComfyUI | Desktop 0.40.0, `http://127.0.0.1:8188` | Kurulum/sürüm mevcut çalışmada doğrulanmadı |
 | Pixal3D/TRELLIS.2 modelleri | 7/7 ad API'de mevcut | Mevcut çalışmada doğrulanmadı |
 | Resmî grafın çalıştırılabilir node'ları | 43/43 mevcut | Mevcut çalışmada doğrulanmadı |
-| Optimizasyonlu Fox Plush üretimi | **Henüz yapılmadı** | **Henüz yapılmadı** |
+| Optimizasyonlu Fox Plush üretimi | **Pixal3D GLB/PBR + GPU log PASS (2026-10-14)**; Blender LOD/Unity bekliyor | **Henüz yapılmadı** |
 
 ## Geçmiş çalışma deneyimi
 
@@ -32,4 +32,4 @@ Kullanıcı ComfyUI üzerinden **daha önce 3D üretimini başarıyla gerçekle�
 
 ## Anlık karar
 
-**İlk pilotu Station A'da çalıştır.** Station B'ye geçmek zorunda değilsin. Önce PLAYBOX Fox Plush Pixal3D pilotundan ilk PBR dokulu GLB'yi ve gerçek GPU logunu al, ardından Blender/Unity kabul kapılarına geç. Tek başarılı varlık oluşmadan batch açma.
+**İlk Pixal3D pilotu Station A'da tamamlandı.** Referans ve gerçek GLB kimlikleri, GPU ölçümleri ve topoloji düzeltmesi docs/AI3D_PLAYBOX_FOX_FIRST_RUN_2026-10-14.md altında kayıtlı. Kullanıcı kararına göre GPU'nun %100'e ulaşması tekli üretimde kabul edilebilir. Station B'ye geçmek zorunlu değil. Şimdi Blender LOD ve Unity testi yapılacak; batch otomasyonu kullanıcının çoğunlukla tekli üretim tercihi nedeniyle açılmayacak.
