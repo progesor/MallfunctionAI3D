@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import type { LiteGraph, ObjectInfo, ApiPrompt } from './workflow';
+import type { ObjectInfo, ApiPrompt } from './workflow';
+import type { WorkflowDocument } from './api-workflow';
 
 export interface Settings {
   comfyUrl: string;
@@ -59,9 +60,11 @@ export const bridge = {
   health: () => invoke<Record<string, unknown>>('comfy_health'),
   nodeInfo: () => invoke<ObjectInfo>('comfy_node_info'),
   workflows: () => invoke<WorkflowDescriptor[]>('get_workflows'),
-  workflow: (id: string) => invoke<LiteGraph>('get_workflow_json', { id }),
+  workflow: (id: string) => invoke<WorkflowDocument>('get_workflow_json', { id }),
+  importApiWorkflow: (path: string) => invoke<WorkflowDescriptor>('comfy_import_api_workflow', { path }),
+  jobDiagnostics: (promptId: string) => invoke<Record<string, unknown>>('comfy_job_diagnostics', { promptId }),
   uploadImage: (path: string) => invoke<string>('comfy_upload_image', { path }),
-  submit: (request: { workflowId: string; imagePath: string; apiPrompt: ApiPrompt; uiWorkflow: LiteGraph; config: unknown }) =>
+  submit: (request: { workflowId: string; imagePath: string; apiPrompt: ApiPrompt; uiWorkflow: unknown; config: unknown }) =>
     invoke<JobStatus>('comfy_submit_job', { request }),
   pollJob: (promptId: string) => invoke<JobStatus>('comfy_poll_job', { promptId }),
   gpu: () => invoke<GpuStats>('gpu_snapshot'),
@@ -75,6 +78,7 @@ export const bridge = {
   blenderDetect: () => invoke<string | null>('blender_detect'),
   pickImage: () => open({ multiple: false, directory: false, filters: [{ name: 'Reference image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] }),
   pickGlb: () => open({ multiple: false, directory: false, filters: [{ name: 'glTF Binary', extensions: ['glb'] }] }),
+  pickApiWorkflow: () => open({ multiple: false, directory: false, filters: [{ name: 'ComfyUI API Workflow', extensions: ['json'] }] }),
   pickBlender: () => open({ multiple: false, directory: false, filters: [{ name: 'Blender executable', extensions: ['exe'] }] }),
   pickArchive: () => open({ multiple: false, directory: true }),
 };
