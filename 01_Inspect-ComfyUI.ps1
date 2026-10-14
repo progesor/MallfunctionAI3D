@@ -106,18 +106,64 @@ $requiredNodeNames = @('PrimitiveBoolean','PrimitiveInt','LoadImage','UNETLoader
     'LoadMoGeModel','MoGeInference','LoadBackgroundRemovalModel','RemoveBackground','ComfySwitchNode',
     'RemeshMesh','DecimateMesh','UnwrapMesh','BakeTextureFromVoxel','BakeNormalMapFromMesh',
     'BakeAmbientOcclusion','ApplyTextureToMesh','MeshToFile3D','Save3DAdvanced','Preview3DAdvanced')
-$info = TryGet '/object_info' 45
-$requiredNodes = @()
-if ($null -ne $info) {
-    $names = @($info.PSObject.Properties.Name)
-    foreach ($type in $requiredNodeNames) {
-        $requiredNodes += [pscustomobject]@{type=$type;present=($names -contains $type)}
+# Explicitly parse the HTTP response body. On some ComfyUI Desktop / Windows
+# PowerShell combinations, Invoke-RestMethod may return a String rather than
+# a PSCustomObject; in v0.1.1 that caused "Length" to be reported as the only
+# node type and a false "0/29 nodes" result.
+function Get-NodeNamesFromApi([string]$path, [int]$timeoutSeconds = 45) {
+    $response = Invoke-WebRequest -Uri ($ComfyUrl + $path) -Method Get -UseBasicParsing -TimeoutSec $timeoutSeconds -Headers @{Accept='application/json'}
+    if ($response.StatusCode -ne 200) { throw "HTTP $($response.StatusCode) for $path" }
+    $raw = [string]$response.Content
+    if ([string]::IsNullOrWhiteSpace($raw)) { throw "Empty JSON for $path" }
+    $obj = ConvertFrom-Json -InputObject $raw -ErrorAction Stop
+    # Handles an unusual double-serialized response, without guessing from
+    # object/string Length properties or treating an API failure as missing.
+    for ($i = 0; ($i -lt 2) -and ($obj -is [string]); $i++) {
+        $obj = ConvertFrom-Json -InputObject $obj -ErrorAction Stop
     }
-    SaveJson 'required_nodes.json' $requiredNodes
-    [System.IO.File]::WriteAllLines((Join-Path $folder 'all_available_node_types.txt'),$names)
-} else {
-    LogWarn 'Cannot inspect node types; API unreachable or unauthorized'
+    if ($obj -is [System.Collections.IDictionary]) {
+        return @($obj.Keys | ForEach-Object { [string]$_ })
+    }
+    if ($obj -is [pscustomobject]) {
+        return @($obj.PSObject.Properties | ForEach-Object { [string]$_.Name })
+    }
+    throw "Unexpected object_info response type: $($obj.GetType().FullName)"
 }
+$requiredNodes = @()
+$allNodeNames = @()
+$nodeCheckMethod = 'bulk'
+try {
+    $allNodeNames = @(Get-NodeNamesFromApi '/object_info' 90)
+    if ($allNodeNames.Count -lt 20 -or ($allNodeNames.Count -eq 1 -and $allNodeNames[0] -eq 'Length')) {
+        throw "Invalid bulk node list: $($allNodeNames.Count) keys"
+    }
+    [System.IO.File]::WriteAllLines((Join-Path $folder 'all_available_node_types.txt'), [string[]]$allNodeNames)
+    foreach ($type in $requiredNodeNames) {
+        $present = $allNodeNames -ccontains $type
+        $requiredNodes += [pscustomobject]@{type=$type;present=$present;status=$(if($present){'present'}else{'missing'});method='bulk'}
+    }
+} catch {
+    LogWarn "Bulk /object_info could not be parsed reliably: $($_.Exception.Message); checking individual node endpoints instead"
+    $nodeCheckMethod = 'per-node'
+    foreach ($type in $requiredNodeNames) {
+        try {
+            $path = '/object_info/' + [System.Uri]::EscapeDataString($type)
+            $returned = @(Get-NodeNamesFromApi $path 20)
+            $present = $returned -ccontains $type
+            $requiredNodes += [pscustomobject]@{type=$type;present=$present;status=$(if($present){'present'}else{'missing'});method='per-node'}
+        } catch {
+            # Important: unverified is NOT missing.
+            LogWarn "Node $type could not be verified: $($_.Exception.Message)"
+            $requiredNodes += [pscustomobject]@{type=$type;present=$null;status='unknown';method='per-node'}
+        }
+    }
+}
+SaveJson 'required_nodes.json' $requiredNodes
+SaveJson 'node_check_info.json' ([pscustomobject]@{
+    method=$nodeCheckMethod
+    total_required=$requiredNodeNames.Count
+    full_node_count=$(if($nodeCheckMethod -eq 'bulk'){$allNodeNames.Count}else{$null})
+})
 
 # Host-only diagnostics; no Docker environment variables, secrets or model file modifications.
 TryCommand 'nvidia-smi' @('--query-gpu=index,name,driver_version,memory.total,memory.used,utilization.gpu,temperature.gpu','--format=csv') 'nvidia_smi.txt'
@@ -141,16 +187,21 @@ try {
 } catch { LogWarn "Cannot read host RAM: $($_.Exception.Message)" }
 SaveJson 'warnings.json' @($warnings)
 $missingModels=@($requiredModels | Where-Object { -not $_.present })
-$missingNodes=@($requiredNodes | Where-Object { -not $_.present })
+$missingNodes=@($requiredNodes | Where-Object { $_.status -eq 'missing' })
+$presentNodes=@($requiredNodes | Where-Object { $_.status -eq 'present' })
+$unknownNodes=@($requiredNodes | Where-Object { $_.status -eq 'unknown' })
 $summary = @(
     'MALLFUNCTION COMFYUI READ-ONLY AUDIT',
     'Timestamp: ' + (Get-Date -Format o),
     'ComfyUI URL: ' + $ComfyUrl,
     'API /system_stats: ' + [bool]($null -ne $stats),
     'Models found: ' + ($requiredModels.Count - $missingModels.Count) + '/' + $requiredModels.Count,
-    'Nodes found: ' + ($requiredNodes.Count - $missingNodes.Count) + '/' + $requiredNodes.Count,
+    'Nodes found: ' + $presentNodes.Count + '/' + $requiredNodes.Count,
+    'Node status unknown: ' + $unknownNodes.Count,
+    'Node check method: ' + $nodeCheckMethod,
     'Missing models: ' + (($missingModels | ForEach-Object {$_.filename}) -join ', '),
-    'Missing nodes: ' + (($missingNodes | ForEach-Object {$_.type}) -join ', '),
+    'Missing nodes (confirmed): ' + (($missingNodes | ForEach-Object {$_.type}) -join ', '),
+    'Unknown nodes (unverified): ' + (($unknownNodes | ForEach-Object {$_.type}) -join ', '),
     'Warnings: ' + $warnings.Count,
     'No local installation or model weights have been changed.'
 )
