@@ -1,0 +1,136 @@
+{
+  "project": "Mallfunction",
+  "asset_id": "PLAYBOX_FoxPlush",
+  "engine": "pixal3d",
+  "status": "PREPARED_NOT_EXECUTED",
+  "upstream_commit": "3e89967349dd95fa68ce3b36966f41d642af8ea7",
+  "upstream_blob_sha1": "d5fc9347a0d0f331f8da1556344fea5e7af14182",
+  "reference_expected_in_comfy_input": "PLAYBOX_FoxPlush_reference.png",
+  "workflow_file": "Mallfunction_PLAYBOX_FoxPlush_pixal3d_pilot_v01.json",
+  "graph_nodes": 66,
+  "graph_links": 100,
+  "modifications": [
+    {
+      "id": 119,
+      "type": "VaeDecodeStructureTrellis2",
+      "widget": "resolution",
+      "before": "32",
+      "after": "32"
+    },
+    {
+      "id": 94,
+      "type": "Trellis2UpsampleStage",
+      "widget": "target_resolution",
+      "before": "1536",
+      "after": "1024"
+    },
+    {
+      "id": 241,
+      "type": "RemeshMesh",
+      "widget": "resolution",
+      "before": 768,
+      "after": 512
+    },
+    {
+      "id": 186,
+      "type": "DecimateMesh",
+      "widget": "target_face_count",
+      "before": 700000,
+      "after": 8000
+    },
+    {
+      "id": 196,
+      "type": "UnwrapMesh",
+      "widget": "resolution",
+      "before": 2048,
+      "after": 1024
+    },
+    {
+      "id": 288,
+      "type": "PrimitiveInt",
+      "widget": "value",
+      "before": 4096,
+      "after": 1024
+    },
+    {
+      "id": 147,
+      "type": "BakeTextureFromVoxel",
+      "widget": "texture_size",
+      "before": 2048,
+      "after": 1024
+    },
+    {
+      "id": 224,
+      "type": "BakeNormalMapFromMesh",
+      "widget": "resolution",
+      "before": 2048,
+      "after": 1024
+    },
+    {
+      "id": 233,
+      "type": "BakeAmbientOcclusion",
+      "widget": "resolution",
+      "before": 1024,
+      "after": 1024
+    },
+    {
+      "id": 233,
+      "type": "BakeAmbientOcclusion",
+      "widget": "samples",
+      "before": 64,
+      "after": 32
+    },
+    {
+      "id": 261,
+      "type": "RenderUVAtlas",
+      "widget": "resolution",
+      "before": 1024,
+      "after": 1024
+    },
+    {
+      "id": 316,
+      "type": "PrimitiveBoolean",
+      "widget": "value",
+      "before": false,
+      "after": false
+    },
+    {
+      "id": 314,
+      "type": "ComfySwitchNode",
+      "widget": "switch",
+      "before": false,
+      "after": false
+    },
+    {
+      "id": 315,
+      "type": "ComfySwitchNode",
+      "widget": "switch",
+      "before": false,
+      "after": false
+    },
+    {
+      "id": 318,
+      "type": "ComfySwitchNode",
+      "widget": "switch",
+      "before": false,
+      "after": false
+    },
+    {
+      "id": 122,
+      "type": "LoadImage",
+      "widget": "image",
+      "before": "viking_wolf_rune_axe.png",
+      "after": "PLAYBOX_FoxPlush_reference.png"
+    },
+    {
+      "id": 322,
+      "type": "Save3DAdvanced",
+      "widget": "filename_prefix",
+      "before": "3d/ComfyUI",
+      "after": "3d/Mallfunction/PLAYBOX_FoxPlush_pixal3d_pilot_v01"
+    }
+  ],
+  "first_run": "Upload the original fox reference in LoadImage; run only one workflow; log GPU separately",
+  "outputs_verified": false,
+  "hardware_target": "RTX 4070 Ti SUPER 16GB (pilot settings untested)"
+}
