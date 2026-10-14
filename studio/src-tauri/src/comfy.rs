@@ -229,6 +229,45 @@ fn gather_glb(value:&Value, found:&mut Vec<Output3d>) {
     }
 }
 
+fn history_failure_detail(entry:&Value)->String {
+    if let Some(messages)=entry.pointer("/status/messages").and_then(Value::as_array) {
+        for item in messages.iter().rev() {
+            if let Some(values)=item.as_array() {
+                if values.first().and_then(Value::as_str)==Some("execution_error") {
+                    let detail=values.get(1).unwrap_or(&Value::Null);
+                    let node=detail.get("node_id").and_then(Value::as_str).unwrap_or("?");
+                    let kind=detail.get("node_type").and_then(Value::as_str).unwrap_or("node");
+                    let err=detail.get("exception_message").and_then(Value::as_str)
+                        .or_else(||detail.get("message").and_then(Value::as_str)).unwrap_or("Bilinmeyen ComfyUI hatası");
+                    return format!("ComfyUI #{node} ({kind}) hata: {err}");
+                }
+            }
+        }
+    }
+    let status=entry.pointer("/status/status_str").and_then(Value::as_str).unwrap_or("unknown");
+    format!("ComfyUI işlem durumu: {status}; ayrıntılar için Tanı Kaydı seç.")
+}
+
+#[tauri::command]
+pub async fn comfy_job_diagnostics(prompt_id:String,state:State<'_,StudioState>)->StudioResult<Value>{
+    if Uuid::parse_str(&prompt_id).is_err(){return Err("Geçersiz prompt kimliği".into());}
+    let response=state.client.get(endpoint(&state,&format!("/history/{prompt_id}"))?)
+        .send().await.map_err(|e|e.to_string())?.error_for_status().map_err(|e|e.to_string())?;
+    let history:Value=response.json().await.map_err(|e|e.to_string())?;
+    let entry=history.get(&prompt_id).unwrap_or(&Value::Null);
+    let outputs=entry.get("outputs").and_then(Value::as_object)
+        .map(|v|v.iter().map(|(key,val)|json!({"node":key,"outputKeys":val.as_object()
+          .map(|fields|fields.keys().cloned().collect::<Vec<_>>()).unwrap_or_default()})).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let messages=entry.pointer("/status/messages").cloned().unwrap_or(json!([]));
+    let stored_prompt=entry.get("prompt").and_then(Value::as_array).and_then(|items|items.get(2));
+    Ok(json!({"promptId":prompt_id,"comfyUrl":state.current_settings()?.comfy_url,
+        "gpuStation":state.current_settings()?.station,
+        "status":entry.pointer("/status/status_str"),"completed":entry.pointer("/status/completed"),
+        "saveNodeInExecutedPrompt":stored_prompt.and_then(|v|v.get("322")).is_some(),
+        "outputNodes":outputs,"messages":messages,"historyAvailable":entry.is_object()}))
+}
+
 fn queue_contains(queue:&Value,key:&str,prompt_id:&str)->bool {
     queue.get(key).and_then(Value::as_array).map(|q|q.iter().any(|entry| {
         entry.get(1).and_then(Value::as_str)==Some(prompt_id)
@@ -247,7 +286,7 @@ pub async fn comfy_poll_job(prompt_id:String,state:State<'_,StudioState>) -> Stu
     if let Some(entry)=history.get(&prompt_id) {
         let job_status=entry.pointer("/status/status_str").and_then(Value::as_str).unwrap_or("");
         if job_status=="error" || job_status=="failed" {
-            let detail=entry.pointer("/status/messages").map(|v|v.to_string()).unwrap_or_default();
+            let detail=history_failure_detail(entry);
             state.job_update(&prompt_id,"failed",None,&detail)?;
             return Ok(JobStatus{prompt_id,status:"failed".into(),message:detail,asset:None});
         }
@@ -269,7 +308,7 @@ pub async fn comfy_poll_job(prompt_id:String,state:State<'_,StudioState>) -> Stu
             return Ok(JobStatus{prompt_id,status:"done".into(),message:"GLB indirildi ve arşivlendi".into(),asset:Some(asset)});
         }
         if job_status=="success" || entry.pointer("/status/completed").and_then(Value::as_bool)==Some(true) {
-            let detail="ComfyUI görevi tamamladı ama history içinde GLB bulunamadı. Save3DAdvanced çıktısını kontrol et.";
+            let detail="ComfyUI işi bitirdi ancak GLB history çıkışında yok. Save3DAdvanced #322 hatası olabilir. Tanı Kaydı oluşturup paylaş.";
             state.job_update(&prompt_id,"no_output",None,detail)?;
             return Ok(JobStatus{prompt_id,status:"no_output".into(),message:detail.into(),asset:None});
         }
@@ -294,6 +333,30 @@ mod tests {
         let mut hits=vec![];gather_glb(&fixture,&mut hits);
         assert_eq!(hits.len(),1);
         assert_eq!(hits[0].filename,"fox.glb");
+    }
+    #[test] fn supplied_api_pilot_has_full_3d_save_chain() {
+        let template=builtin_api("pixal3d-fox").unwrap();
+        validate_pilot_api(&template).unwrap();
+        assert_eq!(template["322"]["class_type"],"Save3DAdvanced");
+        assert!(template["322"]["inputs"]["viewport_state"].is_object());
+        let switched=builtin_api("trellis2-fox").unwrap();
+        assert_eq!(switched["316"]["inputs"]["value"],true);
+    }
+    #[test] fn rejects_mask_only_3d_output() {
+        let mut prompt=builtin_api("pixal3d-fox").unwrap();
+        prompt["322"]["inputs"]["model_3d"]=json!(["303",0]);
+        assert!(validate_pilot_api(&prompt).is_err());
+        prompt["322"]["inputs"]["model_3d"]=json!(["285",0]);
+        prompt["322"]["inputs"]["viewport_state"]=json!("");
+        assert!(validate_pilot_api(&prompt).is_err());
+    }
+    #[test] fn extracts_comfy_execution_error() {
+        let entry=json!({"status":{"messages":[["execution_error",{
+            "node_id":"322","node_type":"Save3DAdvanced","exception_message":"viewport invalid"
+        }]]}});
+        let result=history_failure_detail(&entry);
+        assert!(result.contains("#322"));
+        assert!(result.contains("viewport invalid"));
     }
     #[test] fn ignores_path_traversal() {
         let mut hits=vec![];gather_glb(&json!({"filename":"../bad.glb","type":"output"}),&mut hits);
