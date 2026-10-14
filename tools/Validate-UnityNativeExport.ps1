@@ -13,15 +13,14 @@ if (!(Test-Path -LiteralPath (Join-Path $project "ProjectSettings/ProjectVersion
     throw "ProjectPath is not a Unity project: $project"
 }
 if (!$UnityEditor) {
-    $hub = "C:\Program Files\Unity\Hub\Editor"
-    if (Test-Path $hub) {
-        $UnityEditor = Get-ChildItem -Path $hub -Filter Unity.exe -File -Recurse |
-          Where-Object { $_.FullName -match '[\\/]Editor[\\/]Unity\.exe$' } |
-          Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
-    }
+    $projectVersionLine = Get-Content -LiteralPath (Join-Path $project "ProjectSettings/ProjectVersion.txt") |
+        Where-Object { $_ -match '^m_EditorVersion:\s*(\S+)' } | Select-Object -First 1
+    if (!$projectVersionLine) { throw "Unity ProjectVersion.txt has no m_EditorVersion." }
+    $version = [regex]::Match($projectVersionLine, '^m_EditorVersion:\s*(\S+)').Groups[1].Value
+    $UnityEditor = Join-Path "C:\Program Files\Unity\Hub\Editor" (Join-Path $version "Editor\Unity.exe")
 }
 if (!$UnityEditor -or !(Test-Path -LiteralPath $UnityEditor)) {
-    throw "Unity.exe not found. Use -UnityEditor path to the installed version matching this project."
+    throw "Unity.exe not found for this project's exact Editor version. Install it with Unity Hub or pass -UnityEditor matching ProjectVersion.txt."
 }
 $imported = Join-Path $project "Assets/MallfunctionAI3D/Imported"
 if (!(Test-Path $imported)) { throw "No imported AI3D assets in this Unity project." }
