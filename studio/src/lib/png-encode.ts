@@ -4,14 +4,21 @@
  */
 const SIGNATURE = Uint8Array.from([137,80,78,71,13,10,26,10]);
 
-function crc32(data: Uint8Array): number {
-  let crc = 0xffffffff;
-  for (const byte of data) {
-    crc ^= byte;
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < table.length; i++) {
+    let crc = i;
     for (let bit = 0; bit < 8; bit++) {
       crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
     }
+    table[i] = crc >>> 0;
   }
+  return table;
+})();
+
+function crc32(data: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of data) crc = (crc >>> 8) ^ CRC_TABLE[(crc ^ byte) & 255];
   return (crc ^ 0xffffffff) >>> 0;
 }
 
