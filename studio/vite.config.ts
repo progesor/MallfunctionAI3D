@@ -5,5 +5,5 @@ export default defineConfig({
   server: { host: '127.0.0.1', port: 1420, strictPort: true },
   clearScreen: false,
   envPrefix: ['VITE_', 'TAURI_ENV_*'],
-  build: { target: process.env.TAURI_ENV_PLATFORM === 'windows' ? 'chrome105' : 'safari13' },
+  build: { target: 'chrome105' },
 });
