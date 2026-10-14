@@ -462,7 +462,8 @@ mod tests {
         assert!(dir.join("Textures/MetallicSmoothness.png").is_file());
         assert!(dir.join("Textures/Occlusion.png").is_file());
         for i in 0..3 {
-            let (g,t)=geometry_only_glb(&fs::read(lod_folder.join(format!("PLAYBOX_FoxPlush_LOD{i}.glb"))).unwrap();
+            let lod_bytes=fs::read(lod_folder.join(format!("PLAYBOX_FoxPlush_LOD{i}.glb"))).unwrap();
+            let (g,t)=geometry_only_glb(&lod_bytes).unwrap();
             assert_eq!(t,1);
             assert_eq!(fs::read(dir.join(format!("Meshes/LOD{i}.glb"))).unwrap(),g);
         }
