@@ -87,7 +87,10 @@ export function ModelViewport({ base64, title, busy, expanded=false, onToggleExp
         </div>
       </div>
       <div className="viewport-canvas">
-        <Canvas shadows={false} camera={{ position: [4.4, 3.15, 5.1], fov: 34, near: 0.02, far: 120 }} dpr={[1, 1.75]}>
+        {/* Render only when geometry, controls or layout change. Continuous GPU frames
+            starve PNG encoding and browser interaction on Windows SwiftShader CI;
+            Drei OrbitControls invalidates on interaction even with damping. */}
+        <Canvas frameloop="demand" shadows={false} camera={{ position: [4.4, 3.15, 5.1], fov: 34, near: 0.02, far: 120 }} dpr={[1, 1.75]}>
           <color attach="background" args={['#141e2a']} />
           <ambientLight intensity={1.25} />
           <hemisphereLight args={['#f1f6ff', '#233445', 1.3]} />
