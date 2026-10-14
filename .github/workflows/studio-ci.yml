@@ -26,6 +26,10 @@ jobs:
       - name: React/Three.js typecheck and Vite build
         working-directory: studio
         run: npm run build
+      - name: Rust / Tauri typecheck
+        run: cargo check --manifest-path studio/src-tauri/Cargo.toml
+      - name: Rust API workflow and history diagnostics tests
+        run: cargo test --manifest-path studio/src-tauri/Cargo.toml --lib
       - name: Install headless Chromium for layout tests
         working-directory: studio
         run: npx playwright install chromium
@@ -41,7 +45,3 @@ jobs:
             studio/playwright-report
             studio/test-results
           retention-days: 7
-      - name: Rust / Tauri typecheck
-        run: cargo check --manifest-path studio/src-tauri/Cargo.toml
-      - name: Rust API workflow and history diagnostics tests
-        run: cargo test --manifest-path studio/src-tauri/Cargo.toml --lib

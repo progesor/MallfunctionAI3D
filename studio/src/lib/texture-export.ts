@@ -118,13 +118,13 @@ export function resamplePbr(
 }
 
 async function decodeImage(image: EmbeddedTexture): Promise<{ rgba: Uint8ClampedArray; width: number; height: number }> {
-  const bytes = new Uint8Array(image.bytes);
-  const url = URL.createObjectURL(new Blob([bytes], { type: image.mimeType }));
+  // Decode bytes directly. Blob URLs can be revoked while a background image
+  // decode is still pending after React remounts or GPU-heavy previews.
+  // ImageBitmap is supported in both modern WebView2 and Chromium tests.
+  const source = new Blob([new Uint8Array(image.bytes)], { type: image.mimeType });
+  const bitmap = await createImageBitmap(source);
   try {
-    const loaded = new Image();
-    loaded.src = url;
-    await loaded.decode();
-    const width = loaded.naturalWidth, height = loaded.naturalHeight;
+    const width = bitmap.width, height = bitmap.height;
     if (width < 1 || height < 1 || width > 8192 || height > 8192 || width * height > 32_000_000) {
       throw new Error('Görüntü güvenli decode boyutu sınırını aşıyor.');
     }
@@ -132,11 +132,9 @@ async function decodeImage(image: EmbeddedTexture): Promise<{ rgba: Uint8Clamped
     canvas.width = width; canvas.height = height;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) throw new Error('2D Canvas açılamadı.');
-    ctx.drawImage(loaded, 0, 0);
+    ctx.drawImage(bitmap, 0, 0);
     return { rgba: ctx.getImageData(0, 0, width, height).data, width, height };
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  } finally { bitmap.close(); }
 }
 
 async function encodePng(rgba: Uint8ClampedArray, width: number, height: number): Promise<string> {

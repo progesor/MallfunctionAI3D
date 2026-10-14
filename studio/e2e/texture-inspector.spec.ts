@@ -95,7 +95,9 @@ test('texture export creates a new immutable map set and keeps viewport usable',
   await expect(page.getByTestId('texture-export-panel')).toBeVisible();
   await page.getByRole('combobox',{name:'Texture export çözünürlüğü'}).selectOption('512');
   await page.getByRole('button',{name:/5 PBR haritasını dışa aktar/}).click();
-  await expect(page.getByText('5 PNG kaydedildi')).toBeVisible();
+  // Canvas PNG encoding can be slow on GitHub-hosted software-rendered Chromium.
+  // Wait for actual end-to-end export completion, not an arbitrary 5s UI tick.
+  await expect(page.getByText('5 PNG kaydedildi')).toBeVisible({timeout:25_000});
   const calls=await page.evaluate(()=>(window as unknown as {__textureExportCalls:unknown[]}).__textureExportCalls);
   expect(calls).toHaveLength(1);
   const record=calls[0] as {assetId:string,preset:string,files:Array<{filename:string,width:number,height:number,bytes:number}>};
