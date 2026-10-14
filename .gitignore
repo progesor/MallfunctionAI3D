@@ -2,8 +2,11 @@ reports/*
 !reports/.gitkeep
 upstream/*
 !upstream/.gitkeep
+!upstream/official_pixal3d_trellis2.json
 workflows/*
 !workflows/.gitkeep
+!workflows/Mallfunction_PLAYBOX_FoxPlush_*_pilot_v01.json
+!workflows/Mallfunction_PLAYBOX_FoxPlush_*_pilot_v01.audit.json
 references/*.png
 references/*.jpg
 references/*.jpeg
