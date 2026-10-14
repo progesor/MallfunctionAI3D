@@ -1,0 +1,290 @@
+import { useCallback, useEffect, useState } from 'react';
+import {
+  Activity, Archive, ArrowDownToLine, ArrowUpRight, Box, Boxes, Check, ChevronDown, ChevronRight,
+  CircleAlert, CircleCheck, CloudCog, Command, Cpu, Database, FileBox, FolderOpen, Gauge, Image as ImageIcon,
+  Layers3, LoaderCircle, Monitor, PackageCheck, Plus, RotateCcw, Save, Settings2,
+  SlidersHorizontal, Sparkles, SquareStack, WandSparkles, X,
+} from 'lucide-react';
+import { bridge, formatBytes, isTauri, shortDate } from './lib/bridge';
+import type { Asset, Environment, GpuStats, JobStatus, LodResult, Settings, WorkflowDescriptor } from './lib/bridge';
+import { DEFAULT_OPTIONS, preparePilot, toApiPrompt, validatePilot } from './lib/workflow';
+import type { GenerateOptions } from './lib/workflow';
+import { STUDIO_MODULES } from './lib/modules';
+import type { ModuleKind } from './lib/modules';
+import { ModelViewport } from './components/ModelViewport';
+import './styles/app.css';
+
+const initialSettings: Settings = {
+  comfyUrl: 'http://127.0.0.1:8188', blenderPath: '', station: '4070ti-super', libraryRoot: '',
+};
+const tabIcons = { generation: WandSparkles, inspection: Box, library: Archive,
+  optimization: SlidersHorizontal, texture: Layers3, image: ImageIcon, export: PackageCheck };
+
+function SettingDialog({ current, onSave, onClose }: { current: Settings; onSave: (settings: Settings) => Promise<void>; onClose: () => void }) {
+  const [draft, setDraft] = useState<Settings>(current);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  async function save() {
+    setSaving(true); setError('');
+    try { await onSave(draft); onClose(); }
+    catch (e) { setError(String(e)); }
+    finally { setSaving(false); }
+  }
+  return <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal" role="dialog" aria-modal="true" aria-label="Studio settings">
+      <div className="modal-header"><div><span className="eyebrow">LOCAL ENVIRONMENT</span><h2>Studio Ayarları</h2></div>
+        <button type="button" className="icon-button" onClick={onClose} aria-label="Kapat"><X size={18} /></button></div>
+      <p className="modal-desc">Ayarlar bu bilgisayarda tutulur. Mevcut ComfyUI, Blender ve model önbelleği değiştirilmez.</p>
+      <label className="field"><span>ComfyUI API adresi</span><input value={draft.comfyUrl} onChange={(e) => setDraft({ ...draft, comfyUrl: e.target.value })} placeholder="http://127.0.0.1:8188" /></label>
+      <label className="field"><span>İstasyon kimliği</span><input value={draft.station} onChange={(e) => setDraft({ ...draft, station: e.target.value })} placeholder="4070ti-super" /></label>
+      <label className="field"><span>Blender executable</span><div className="field-with-button"><input value={draft.blenderPath} onChange={(e) => setDraft({ ...draft, blenderPath: e.target.value })} placeholder="Kurulum yolu otomatik aranır" /><button type="button" onClick={async () => {const p = await bridge.pickBlender(); if (typeof p === 'string') setDraft({ ...draft, blenderPath: p });}}>Seç</button></div></label>
+      <label className="field"><span>Asset arşiv klasörü</span><div className="field-with-button"><input value={draft.libraryRoot} onChange={(e) => setDraft({ ...draft, libraryRoot: e.target.value })} placeholder="Varsayılan: uygulama veri klasörü" /><button type="button" onClick={async () => {const p = await bridge.pickArchive(); if (typeof p === 'string') setDraft({ ...draft, libraryRoot: p });}}>Seç</button></div></label>
+      {error && <div className="error-message"><CircleAlert size={16} /> {error}</div>}
+      <div className="modal-footer"><button className="btn btn-ghost" type="button" onClick={onClose}>Vazgeç</button><button type="button" className="btn btn-primary" disabled={saving} onClick={save}>{saving ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />} Kaydet</button></div>
+    </div>
+  </div>;
+}
+
+function Metric({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return <div className="metric"><span className="metric-label">{label}</span><strong>{value}</strong>{sub && <small>{sub}</small>}</div>;
+}
+
+function App() {
+  const [active, setActive] = useState<ModuleKind>('generation');
+  const [environment, setEnvironment] = useState<Environment | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [connection, setConnection] = useState<'checking' | 'online' | 'offline'>('checking');
+  const [gpu, setGpu] = useState<GpuStats | null>(null);
+  const [workflows, setWorkflows] = useState<WorkflowDescriptor[]>([]);
+  const [workflowId, setWorkflowId] = useState('pixal3d-fox');
+  const [imagePath, setImagePath] = useState('');
+  const [options, setOptions] = useState<GenerateOptions>({ ...DEFAULT_OPTIONS });
+  const [busy, setBusy] = useState(false);
+  const [job, setJob] = useState<JobStatus | null>(null);
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
+  const [glb, setGlb] = useState<string | null>(null);
+  const [previewLabel, setPreviewLabel] = useState('');
+  const [viewLoading, setViewLoading] = useState(false);
+  const [lod, setLod] = useState<LodResult | null>(null);
+  const [lodLoading, setLodLoading] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+
+  const refresh = useCallback(async () => { setAssets(await bridge.assets()); }, []);
+  const checkConnection = useCallback(async () => {
+    setConnection('checking');
+    try { await bridge.health(); setConnection('online'); }
+    catch { setConnection('offline'); }
+  }, []);
+  useEffect(() => {
+    if (!isTauri()) { setConnection('offline'); setError('Masaüstü komutları için Tauri uygulamasını çalıştır. npm run dev yalnızca önizleme sağlar.'); return; }
+    void Promise.all([bridge.environment(), bridge.workflows(), bridge.assets()])
+      .then(([env, items, library]) => {setEnvironment(env);setWorkflows(items);setAssets(library);})
+      .catch((e) => setError(String(e)));
+    void checkConnection();
+  }, [checkConnection]);
+  useEffect(() => {
+    if (!isTauri()) return;
+    const update = () => { void bridge.gpu().then(setGpu).catch(() => setGpu(null)); };
+    update(); const timer = window.setInterval(update, 3500);
+    return () => window.clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    if (!job || ['done', 'failed', 'no_output'].includes(job.status)) return;
+    let stopped = false; let inFlight = false;
+    const poll = async () => {
+      if (inFlight) return; inFlight = true;
+      try {
+        const current = await bridge.pollJob(job.promptId);
+        if (!stopped) {
+          setJob(current);
+          if (current.asset) {
+            await refresh();
+            if (!stopped) {await showAsset(current.asset);setNotice('GLB otomatik arşivlendi ve önizlemeye alındı.');}
+          }
+        }
+      } catch (e) { if (!stopped) setError(`ComfyUI durum izleme: ${String(e)}`); }
+      finally { inFlight = false; }
+    };
+    void poll(); const interval = window.setInterval(() => void poll(), 2000);
+    return () => { stopped = true; window.clearInterval(interval); };
+    // showAsset is intentionally referenced through current render; polling bound to promptId
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job?.promptId, job?.status, refresh]);
+
+  const connected = connection === 'online';
+  const currentWorkflow = workflows.find((w) => w.id === workflowId);
+  const filteredAssets = assets.filter((asset) => asset.title.toLowerCase().includes(search.toLowerCase()) || asset.engine.toLowerCase().includes(search.toLowerCase()));
+
+  async function showAsset(asset: Asset, lodIndex?: number) {
+    setViewLoading(true);setError('');
+    try {
+      const [data, report] = await Promise.all([
+        lodIndex === undefined ? bridge.assetBinary(asset.id) : bridge.lodBinary(asset.id, lodIndex),
+        bridge.lodReport(asset.id),
+      ]);
+      setSelectedAsset(asset);setGlb(data);setLod(report);setPreviewLabel(`${asset.title}${lodIndex === undefined ? ' / Source' : ` / LOD${lodIndex}`}`);
+      setActive('inspection');
+    } catch (e) { setError(`GLB görüntülenemedi: ${String(e)}`); }
+    finally {setViewLoading(false);}
+  }
+
+  async function runProduction() {
+    setError('');setNotice('');
+    if (!imagePath) {setError('Önce referans görsel seç.');return;}
+    if (!connected) {setError('ComfyUI bağlantısı kapalı. Ayarlardaki adresi kontrol et.');return;}
+    setBusy(true);
+    try {
+      const graph = await bridge.workflow(workflowId);
+      validatePilot(graph);
+      const nodeInfo = await bridge.nodeInfo();
+      const uploadedName = await bridge.uploadImage(imagePath);
+      const prepared = preparePilot(graph, options, uploadedName);
+      const compiled = toApiPrompt(prepared, nodeInfo);
+      const result = await bridge.submit({ workflowId, imagePath, apiPrompt: compiled.prompt, uiWorkflow: prepared,
+        config: { ...options, uploadedName, includedNodes: compiled.reachable.length, station: environment?.settings.station } });
+      setJob(result);setNotice(`ComfyUI kuyruğa aldı: ${result.promptId.slice(0, 8)}…`);
+    } catch (e) {setError(`Üretim başlatılamadı: ${String(e)}`);}
+    finally {setBusy(false);}
+  }
+
+  async function importGlb() {
+    try {
+      const file = await bridge.pickGlb(); if (typeof file !== 'string') return;
+      setBusy(true); const asset = await bridge.importGlb(file);
+      await refresh();await showAsset(asset);
+      setNotice('GLB kaynak arşive kopyalandı. Orijinal dosya değişmedi.');
+    } catch (e) {setError(`İçe aktarma hatası: ${String(e)}`);}
+    finally {setBusy(false);}
+  }
+
+  async function generateLods() {
+    if (!selectedAsset) return;
+    setLodLoading(true);setError('');setNotice('');
+    try {
+      const result = await bridge.generateLods(selectedAsset.id);
+      setLod(result);setNotice('Blender üç LOD modelini arşive kaydetti. Source GLB korunuyor.');
+    } catch(e) {setError(`Blender işlemi tamamlanamadı: ${String(e)}`);}
+    finally {setLodLoading(false);}
+  }
+
+  async function saveSettings(settings:Settings) {
+    await bridge.saveSettings(settings);
+    setEnvironment(await bridge.environment());
+    await checkConnection();
+    setNotice('Bu istasyonun ayarları kaydedildi.');
+  }
+
+  return <div className="app-shell">
+    <aside className="sidebar">
+      <div className="brand"><div className="brand-symbol"><Box size={23}/><i/></div><div><strong>AI3D <em>STUDIO</em></strong><span>MALLFUNCTION / LOCAL</span></div></div>
+      <div className="sidebar-section-title">WORKSPACE</div>
+      <nav className="main-nav" aria-label="Studio modules">
+        {STUDIO_MODULES.map((mod) => {
+          const Icon = tabIcons[mod.id];
+          return <button type="button" key={mod.id} disabled={!mod.enabled} title={mod.description} onClick={() => setActive(mod.id)}
+            className={`nav-item ${active === mod.id ? 'active' : ''}`}><Icon size={18} /><span>{mod.label}</span>{!mod.enabled ? <small>SOON</small> : active === mod.id ? <ChevronRight size={15}/> : null}</button>;
+        })}
+      </nav>
+      <div className="sidebar-bottom">
+        <div className="sidebar-section-title">LOCAL ENGINE</div>
+        <div className="connection-card"><div className={`status-dot ${connection}`}/><div><strong>ComfyUI Desktop</strong><span>{connected ? 'API connected' : connection === 'checking' ? 'Checking connection' : 'Disconnected'}</span></div><button onClick={() => void checkConnection()} title="Bağlantıyı yenile" type="button"><RotateCcw size={15}/></button></div>
+        <div className="station-info"><Monitor size={15}/><span>{environment?.settings.station || 'Local workstation'}</span></div>
+        <button className="settings-action" onClick={() => setSettingsOpen(true)}><Settings2 size={18}/> Settings <ChevronRight size={15}/></button>
+      </div>
+    </aside>
+
+    <main className="workspace">
+      <header className="topbar"><div className="breadcrumb"><span>PRODUCTION HUB</span><ChevronRight size={15}/><strong>{STUDIO_MODULES.find((m) => m.id === active)?.label}</strong></div><div className="top-actions"><span className="private-pill"><CircleCheck size={13}/> LOCAL-FIRST</span><span className="version">v0.1.0 / M1</span><button className="top-icon" type="button" onClick={() => setSettingsOpen(true)} title="Ayarlar"><Settings2 size={19}/></button></div></header>
+      <div className="workspace-title"><div><span className="eyebrow">AI MODEL PRODUCTION SYSTEM</span><h1>{active === 'library' ? 'Asset Library' : active === 'optimization' ? 'Optimize Studio' : active === 'inspection' ? '3D Inspector' : 'Production Workspace'}</h1><p>ComfyUI → GLB → Blender → Asset Library · Kaynak dosyalar her zaman korunur.</p></div><button type="button" className="btn btn-outline" onClick={() => void importGlb()} disabled={busy}><Plus size={15}/> GLB İçe Aktar</button></div>
+      {error && <div className="banner banner-error"><CircleAlert size={17}/><span>{error}</span><button onClick={() => setError('')} type="button"><X size={17}/></button></div>}
+      {notice && <div className="banner banner-success"><CircleCheck size={17}/><span>{notice}</span><button onClick={() => setNotice('')} type="button"><X size={17}/></button></div>}
+      <div className="main-grid">
+        <section className="tools-column">
+          {active === 'generation' ? <>
+            <div className="panel-heading"><div><span className="panel-id">01</span><h2>Production Setup</h2></div><Sparkles size={17}/></div>
+            <div className="panel-content">
+              <label className="field"><span>WORKFLOW ENGINE</span><div className="select-wrap"><select value={workflowId} onChange={(e) => setWorkflowId(e.target.value)}>{workflows.length ? workflows.map(w => <option value={w.id} key={w.id}>{w.title}</option>) : <option value="pixal3d-fox">Pixal3D · Image → PBR Model</option>}</select><ChevronDown size={15}/></div></label>
+              <div className="help-text">{currentWorkflow?.description || 'Resmî ComfyUI grafı, local modeller, PBR bake.'}</div>
+              <div className="field-label">REFERENCE IMAGE</div>
+              <button type="button" className={`image-drop ${imagePath ? 'has-file' : ''}`} onClick={async () => { const f = await bridge.pickImage(); if (typeof f === 'string') setImagePath(f); }}>
+                <div className="image-drop-icon"><ImageIcon size={27}/></div>
+                <strong>{imagePath ? imagePath.split(/[\\/]/).at(-1) : 'Görsel Seç'}</strong>
+                <span>{imagePath ? 'Değiştirmek için tıkla' : 'PNG / JPG / WEBP'}</span>
+              </button>
+              <div className="separator" />
+              <div className="field-label">GAME ASSET PRESET</div>
+              <div className="preset-grid"><button type="button" className={options.triangles === 8000 && options.textureSize === 1024 ? 'preset active' : 'preset'} onClick={() => setOptions({...DEFAULT_OPTIONS})}><SquareStack size={15}/> Game</button>
+                <button type="button" className={options.triangles === 20000 ? 'preset active' : 'preset'} onClick={() => setOptions({...DEFAULT_OPTIONS,triangles:20000,textureSize:2048})}><Layers3 size={15}/> Detail*</button></div>
+              <div className="detail-warning">* Detail preset daha fazla VRAM kullanabilir; RTX 4070/5080'de doğrulanmadı.</div>
+              <div className="fields-two">
+                <label className="field"><span>TRIANGLE TARGET</span><input type="number" min={1000} max={80000} step={500} value={options.triangles} onChange={(e) => setOptions({...options,triangles:Number(e.target.value)})}/></label>
+                <label className="field"><span>TEXTURE SIZE</span><select value={options.textureSize} onChange={(e) => setOptions({...options,textureSize:Number(e.target.value)})}><option value={1024}>1024 px</option><option value={2048}>2048 px</option></select></label>
+                <label className="field"><span>REMESH GRID</span><select value={options.remesh} onChange={(e) => setOptions({...options,remesh:Number(e.target.value)})}>{[256,384,512,768].map(v=><option key={v} value={v}>{v}</option>)}</select></label>
+                <label className="field"><span>UPSAMPLE</span><select value={options.upsample} onChange={(e) => setOptions({...options,upsample:Number(e.target.value)})}>{[512,768,1024,1536].map(v=><option key={v} value={v}>{v}</option>)}</select></label>
+                <label className="field"><span>AO SAMPLES</span><select value={options.aoSamples} onChange={(e) => setOptions({...options,aoSamples:Number(e.target.value)})}>{[16,32,64].map(v=><option key={v} value={v}>{v}</option>)}</select></label>
+                <label className="field"><span>SEED</span><input type="number" min={0} max={2147483647} value={options.seed} onChange={(e) => setOptions({...options,seed:Number(e.target.value)})}/></label>
+              </div>
+              <button type="button" className="btn btn-primary btn-generate" onClick={() => void runProduction()} disabled={busy || !!(job && ['queued','running','pending_result'].includes(job.status)) || !connected}>
+                {busy ? <LoaderCircle className="spin" size={18}/> : <WandSparkles size={18}/>} {busy ? 'Gönderiliyor…' : 'Generate 3D Asset'} <ChevronRight size={17}/>
+              </button>
+              <p className="mini-disclaimer">Kaynak workflow korunur · İş ComfyUI Desktop üzerinde çalışır · Batch kapalı</p>
+            </div>
+          </> : <>
+            <div className="panel-heading"><div><span className="panel-id">LIB</span><h2>Model Arşivi</h2></div><Database size={17}/></div>
+            <div className="panel-content"><label className="field"><span>ARA</span><input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Model, motor…"/></label>
+              <div className="asset-list">{filteredAssets.map(asset => <button key={asset.id} type="button" className={`asset-row ${selectedAsset?.id === asset.id ? 'chosen' : ''}`} onClick={() => void showAsset(asset)}>
+                <div className="asset-avatar"><FileBox size={20}/></div><div><strong>{asset.title}</strong><span>{asset.engine} · {formatBytes(asset.fileSize)}</span></div><ChevronRight size={14}/></button>)}
+                {!filteredAssets.length && <p className="empty-library">Arşiv boş. GLB içe aktar veya ComfyUI ile üret.</p>}</div>
+              <button className="btn btn-outline btn-full" onClick={() => void importGlb()} type="button"><FolderOpen size={16}/> GLB İçe Aktar</button></div>
+          </>}
+        </section>
+        <section className="center-column">
+          <ModelViewport base64={glb} title={previewLabel} busy={viewLoading} />
+          <div className="bottom-workspace">
+            <div className="log-card"><div className="card-heading"><div><Activity size={17}/><strong>Activity Monitor</strong></div><span className={job && ['running','queued','pending_result'].includes(job.status) ? 'live-status' : 'subdued'}>{job?.status.toUpperCase() || 'STANDBY'}</span></div>
+              <p>{job ? job.message : 'Henüz bu oturumda bir üretim başlatılmadı. Mevcut GLB’leri arşivden inceleyebilirsin.'}</p>
+              {job && <div className="job-bar"><div className={`job-bar-fill ${job.status === 'done' ? 'finished' : ''}`}/></div>}
+              <div className="log-footer"><span><Command size={13}/> ComfyUI / Queue</span><span>{job?.promptId.slice(0, 8) || 'No active prompt'}</span></div>
+            </div>
+            <div className="log-card compact"><div className="card-heading"><div><Database size={17}/><strong>Library</strong></div><span className="subdued">LOCAL</span></div>
+              <div className="library-count"><strong>{assets.length}</strong><span>saved assets</span></div>
+              <div className="log-footer"><span><Archive size={13}/> SQLite + immutable files</span></div>
+            </div>
+          </div>
+        </section>
+        <section className="inspector-column">
+          <div className="panel-heading"><div><span className="panel-id">02</span><h2>Asset Inspector</h2></div><Gauge size={17}/></div>
+          {selectedAsset ? <div className="inspector-block">
+            <span className="section-label">SELECTED MODEL</span><h3>{selectedAsset.title}</h3>
+            <div className="asset-meta"><span>{selectedAsset.engine}</span><span>{shortDate(selectedAsset.createdAt)}</span></div>
+            <div className="stats-grid"><Metric label="TRIANGLES" value={selectedAsset.triangleCount.toLocaleString('en-US')}/><Metric label="VERTICES" value={selectedAsset.vertexCount.toLocaleString('en-US')}/><Metric label="MATERIALS" value={String(selectedAsset.materialCount)}/><Metric label="GLB SIZE" value={formatBytes(selectedAsset.fileSize)}/></div>
+            <div className="meta-row"><span>SHA256</span><code title={selectedAsset.sha256}>{selectedAsset.sha256.slice(0, 16)}…</code></div>
+            <div className="meta-row"><span>Station</span><strong>{selectedAsset.station}</strong></div>
+            <div className="separator"/>
+            <div className="card-heading"><div><Layers3 size={16}/><strong>Blender LOD Pipeline</strong></div></div>
+            <p className="block-description">Tek modelden LOD0/1/2. Orijinal dosya asla değişmez.</p>
+            {lod && <div className="lod-selector"><button onClick={() => void showAsset(selectedAsset)} type="button">SRC</button>{[0,1,2].map(index=><button key={index} type="button" onClick={() => void showAsset(selectedAsset,index)}>LOD{index}</button>)}</div>}
+            {lod && <div className="lod-stats">{lod.report.lods.map((v,index)=><div key={index}><span>LOD{index}</span><strong>{v.triangles.toLocaleString('en-US')} tris</strong></div>)}</div>}
+            <button type="button" className="btn btn-outline btn-full" onClick={() => void generateLods()} disabled={lodLoading}>
+              {lodLoading?<LoaderCircle className="spin" size={16}/>:<SquareStack size={16}/>} {lodLoading ? 'Blender işliyor…' : lod ? 'Yeni LOD versiyonu oluştur' : 'Blender ile LOD oluştur'}
+            </button>
+            <p className="mini-disclaimer">LOD geometrisi oluşturulur; yeniden normal/AO bake yapılmaz.</p>
+          </div> : <div className="inspector-block"><div className="waiting-state"><Boxes size={30}/><strong>Bir model seç</strong><span>Geometri, PBR ve LOD ayrıntıları burada görünecek.</span></div></div>}
+          <div className="system-panel"><div className="card-heading"><div><Cpu size={17}/><strong>GPU Telemetry</strong></div><span className="live-status">● LIVE</span></div>
+            <p className="gpu-name">{gpu?.name || 'NVIDIA GPU'}</p><div className="gpu-line"><span>GPU</span><strong>{gpu?.utilPercent?.toFixed(0) ?? '—'}%</strong></div>
+            <div className="mini-progress"><div style={{width: `${Math.min(100,gpu?.utilPercent ?? 0)}%`}} /></div>
+            <div className="gpu-line"><span>VRAM</span><strong>{gpu?.vramUsedMiB != null ? (gpu.vramUsedMiB/1024).toFixed(2) : '—'} / {gpu?.vramTotalMiB ? (gpu.vramTotalMiB/1024).toFixed(1) : '—'} GiB</strong></div>
+            <div className="mini-progress"><div style={{width:`${gpu?.vramUsedMiB && gpu.vramTotalMiB ? Math.min(100,100*gpu.vramUsedMiB/gpu.vramTotalMiB):0}%`}} /></div>
+            <div className="gpu-line subtle"><span>Temperature</span><strong>{gpu?.temperatureC ?? '—'} °C</strong></div></div>
+        </section>
+      </div>
+      <footer className="bottom-bar"><div><span className="footer-light"/> LOCAL PRODUCTION · NO CLOUD INFERENCE</div><div>{environment?.settings.comfyUrl ?? 'http://127.0.0.1:8188'} <span>•</span> {assets.length} ASSETS</div></footer>
+    </main>
+    {settingsOpen && <SettingDialog current={environment?.settings ?? initialSettings} onSave={saveSettings} onClose={() => setSettingsOpen(false)} />}
+  </div>;
+}
+
+export default App;

@@ -13,3 +13,14 @@ references/*.jpeg
 references/*.webp
 __pycache__/
 *.pyc
+
+# Desktop Studio (local builds and asset data)
+studio/node_modules/
+studio/dist/
+studio/src-tauri/target/
+studio/src-tauri/gen/
+studio/.env
+studio/.env.local
+studio/*.log
+studio/**/*.sqlite3
+studio/**/*.sqlite3-*
