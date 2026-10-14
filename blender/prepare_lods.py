@@ -43,6 +43,7 @@ def quality(ob):
 def args_from_cmd():
     ap=argparse.ArgumentParser()
     ap.add_argument('--input',type=Path,required=True)
+    ap.add_argument('--name',default='PLAYBOX_FoxPlush',help='Safe asset basename for LOD outputs')
     ap.add_argument('--outdir',type=Path,required=True)
     ap.add_argument('--triangles',type=int,nargs=3,default=[8000,5000,3000])
     ap.add_argument('--height-m',type=float,default=0.0,
@@ -53,6 +54,9 @@ def args_from_cmd():
 def main():
     a=args_from_cmd()
     if not a.input.is_file(): raise FileNotFoundError(a.input)
+    import re
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}',a.name):
+        raise ValueError('Asset name must be 1-64 ASCII letters, digits, underscore, dash')
     if any(n<100 for n in a.triangles) or list(a.triangles)!=sorted(a.triangles,reverse=True):
         raise ValueError('Provide three descending triangle targets >=100')
     a.outdir.mkdir(parents=True,exist_ok=True)
@@ -67,7 +71,7 @@ def main():
     if len(meshes)>1:
         bpy.ops.object.join()
     master=bpy.context.view_layer.objects.active
-    master.name='PLAYBOX_FoxPlush_Master'
+    master.name=f'{a.name}_Master'
     if a.height_m>0:
         if master.dimensions.z<=0:raise RuntimeError('Cannot set height on zero-height asset')
         factor=a.height_m/master.dimensions.z
@@ -81,7 +85,7 @@ def main():
     for ix,limit in enumerate(a.triangles):
         clone=master.copy();clone.data=master.data.copy()
         bpy.context.collection.objects.link(clone)
-        clone.name=f'PLAYBOX_FoxPlush_LOD{ix}'
+        clone.name=f'{a.name}_LOD{ix}'
         bpy.ops.object.select_all(action='DESELECT')
         clone.select_set(True);bpy.context.view_layer.objects.active=clone
         initial=triangle_count(clone)
@@ -90,7 +94,7 @@ def main():
             mod.decimate_type='COLLAPSE'
             mod.ratio=min(1.0, limit/initial)
             bpy.ops.object.modifier_apply(modifier=mod.name)
-        filename=a.outdir/f'PLAYBOX_FoxPlush_LOD{ix}.glb'
+        filename=a.outdir/f'{a.name}_LOD{ix}.glb'
         bpy.ops.export_scene.gltf(filepath=str(filename.resolve()), export_format='GLB',use_selection=True)
         row=quality(clone);row['target_triangles']=limit;row['file']=filename.name
         row['file_bytes']=filename.stat().st_size
