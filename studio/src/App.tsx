@@ -4,6 +4,7 @@ import {
   CircleAlert, CircleCheck, CloudCog, Command, Cpu, Database, FileBox, FolderOpen, Gauge, Image as ImageIcon,
   Layers3, LoaderCircle, Monitor, PackageCheck, Plus, RotateCcw, Save, Settings2, Upload,
   SlidersHorizontal, Sparkles, SquareStack, WandSparkles, X, Trash2, ShieldCheck, ImagePlus, AlertTriangle,
+  PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen,
 } from 'lucide-react';
 import { bridge, formatBytes, isTauri, shortDate } from './lib/bridge';
 import type { Asset, Environment, GpuStats, JobStatus, LodResult, Settings, WorkflowDescriptor } from './lib/bridge';
@@ -56,6 +57,8 @@ function App() {
   const [environment, setEnvironment] = useState<Environment | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [viewExpanded, setViewExpanded] = useState(false);
+  const [toolsCollapsed, setToolsCollapsed] = useState(false);
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1120);
   const [debugInfo, setDebugInfo] = useState('');
   const [connection, setConnection] = useState<'checking' | 'online' | 'offline'>('checking');
   const [gpu, setGpu] = useState<GpuStats | null>(null);
@@ -145,6 +148,15 @@ function App() {
     }).catch(()=>{if(live)setSourceSeeds('—');});
     return () => {live=false;};
   },[workflowId,workflows]);
+
+  useEffect(() => {
+    if (!viewExpanded) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setViewExpanded(false);
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [viewExpanded]);
 
   const connected = connection === 'online';
   const stationIsMismatched = !!gpu && !!environment && (
@@ -260,7 +272,7 @@ function App() {
     setNotice('Bu istasyonun ayarları kaydedildi.');
   }
 
-  return <div className="app-shell">
+  return <div className={`app-shell ${viewExpanded ? 'focus-mode' : ''}`}>
     <aside className="sidebar">
       <div className="brand"><div className="brand-symbol"><Box size={23}/><i/></div><div><strong>AI3D <em>STUDIO</em></strong><span>MALLFUNCTION / LOCAL</span></div></div>
       <div className="sidebar-section-title">WORKSPACE</div>
@@ -278,19 +290,34 @@ function App() {
         {stationIsMismatched && environment && <button type="button" className="station-fix" onClick={() => void saveSettings({
           ...environment.settings, station:gpu?.name.includes('5080') ? '5080' : '4070ti-super',
         })}>GPU etiketi farklı · Düzelt</button>}
-        <button className="settings-action" onClick={() => setSettingsOpen(true)}><Settings2 size={18}/> Settings <ChevronRight size={15}/></button>
+        <button type="button" className="settings-action" onClick={() => setSettingsOpen(true)}><Settings2 size={18}/> Settings <ChevronRight size={15}/></button>
       </div>
     </aside>
 
     <main className="workspace">
-      <header className="topbar"><div className="breadcrumb"><span>PRODUCTION HUB</span><ChevronRight size={15}/><strong>{STUDIO_MODULES.find((m) => m.id === active)?.label}</strong></div><div className="top-actions"><span className="private-pill"><CircleCheck size={13}/> LOCAL-FIRST</span><span className="version">v0.1.2 / M1.2</span><button className="top-icon" type="button" onClick={() => setSettingsOpen(true)} title="Ayarlar"><Settings2 size={19}/></button></div></header>
-      <div className="workspace-title"><div className="workspace-heading"><h1>{active === 'library' ? 'Asset Library' : active === 'optimization' ? 'Optimize Studio' : active === 'inspection' ? '3D Inspector' : '3D Production'}</h1><span className="workspace-crumb">ComfyUI <ChevronRight size={12}/> Blender <ChevronRight size={12}/> Asset Library</span></div><button type="button" className="btn btn-outline workspace-import" onClick={() => void importGlb()} disabled={busy}><Plus size={15}/> GLB İçe Aktar</button></div>
-      {error && <div className="banner banner-error"><CircleAlert size={17}/><span>{error}</span><button onClick={() => setError('')} type="button"><X size={17}/></button></div>}
-      {notice && <div className="banner banner-success"><CircleCheck size={17}/><span>{notice}</span><button onClick={() => setNotice('')} type="button"><X size={17}/></button></div>}
-      <div className={`main-grid ${viewExpanded ? 'inspector-expanded' : ''}`}>
+      <header className="topbar">
+        <div className="breadcrumb"><span>STUDIO</span><ChevronRight size={13}/><strong>{STUDIO_MODULES.find((m) => m.id === active)?.label}</strong></div>
+        <div className="top-actions"><span className={`top-connection ${connected ? 'is-connected' : ''}`}><span className="status-dot"/>{connected ? 'ComfyUI bağlı' : connection === 'checking' ? 'Bağlanıyor' : 'ComfyUI çevrimdışı'}</span>
+          <span className="top-station"><Cpu size={14}/>{gpu?.name ?? environment?.settings.station ?? 'Yerel istasyon'}</span>
+          <button className="top-icon" type="button" onClick={() => setSettingsOpen(true)} title="Studio ayarları" aria-label="Studio ayarları"><Settings2 size={17}/></button></div>
+      </header>
+      <div className="workspace-title">
+        <div className="workspace-heading"><span className="workspace-eyebrow">ASSET PRODUCTION WORKSPACE</span>
+          <div className="workspace-title-line"><h1>{active === 'library' ? 'Model Arşivi' : active === 'optimization' ? 'Blender & LOD' : active === 'inspection' ? '3D Inspector' : '3D Production'}</h1>
+            <span className="workspace-crumb">ComfyUI <ChevronRight size={12}/> Blender <ChevronRight size={12}/> Library</span></div>
+        </div>
+        <div className="workspace-controls">
+          <button type="button" className={`toolbar-toggle ${toolsCollapsed ? 'is-active' : ''}`} onClick={() => setToolsCollapsed(value => !value)} aria-label={toolsCollapsed ? 'Üretim panelini göster' : 'Üretim panelini gizle'} aria-pressed={toolsCollapsed} title={toolsCollapsed ? 'Sol paneli göster' : 'Sol paneli gizle'}>{toolsCollapsed ? <PanelLeftOpen size={17}/> : <PanelLeftClose size={17}/>}</button>
+          <button type="button" className="btn btn-outline workspace-import" onClick={() => void importGlb()} disabled={busy}><Plus size={16}/> GLB İçe Aktar</button>
+          <button type="button" className={`toolbar-toggle ${inspectorCollapsed ? 'is-active' : ''}`} onClick={() => setInspectorCollapsed(value => !value)} aria-label={inspectorCollapsed ? 'Asset Inspector panelini göster' : 'Asset Inspector panelini gizle'} aria-pressed={inspectorCollapsed} title={inspectorCollapsed ? 'Sağ paneli göster' : 'Sağ paneli gizle'}>{inspectorCollapsed ? <PanelRightOpen size={17}/> : <PanelRightClose size={17}/>}</button>
+        </div>
+      </div>
+      {error && <div className="banner banner-error" role="alert"><CircleAlert size={17}/><span>{error}</span><button aria-label="Hata bildirimini kapat" onClick={() => setError('')} type="button"><X size={17}/></button></div>}
+      {notice && <div className="banner banner-success" role="status"><CircleCheck size={17}/><span>{notice}</span><button aria-label="Bildirimi kapat" onClick={() => setNotice('')} type="button"><X size={17}/></button></div>}
+      <div className={`main-grid ${viewExpanded ? 'inspector-expanded' : ''} ${toolsCollapsed ? 'hide-tools' : ''} ${inspectorCollapsed ? 'hide-inspector' : ''}`}>
         <section className="tools-column">
           {active === 'generation' ? <>
-            <div className="panel-heading"><div><span className="panel-id">01</span><h2>Production Setup</h2></div><Sparkles size={17}/></div>
+            <div className="panel-heading"><div><span className="panel-id">01</span><h2>Üretim Ayarları</h2></div><Sparkles size={17}/></div>
             <div className="panel-content">
               <label className="field"><span>WORKFLOW ENGINE</span><div className="select-wrap"><select value={workflowId} onChange={(e) => setWorkflowId(e.target.value)}>{workflows.length ? workflows.map(w => <option value={w.id} key={w.id}>{w.title}</option>) : <option value="pixal3d-fox">Pixal3D · Image → PBR Model</option>}</select><ChevronDown size={15}/></div></label>
               <div className="help-text">{currentWorkflow?.description || 'ComfyUI API grafı, yerel modeller, PBR bake.'}</div>
@@ -329,10 +356,12 @@ function App() {
               </div>
               <label className="seed-toggle"><input type="checkbox" checked={overrideSeeds} onChange={e=>setOverrideSeeds(e.target.checked)}/><span>Tüm KSampler seed'lerini ayrıca değiştir <small>(dört aşama birlikte değiştirilir)</small></span></label>
               </>}
+            </div>
+            <div className="production-action-bar">
               <button type="button" className="btn btn-primary btn-generate" onClick={() => void runProduction()} disabled={busy || !!(job && ['queued','running','pending_result'].includes(job.status)) || !connected}>
-                {busy ? <LoaderCircle className="spin" size={18}/> : <WandSparkles size={18}/>} {busy ? 'Gönderiliyor…' : 'Generate 3D Asset'} <ChevronRight size={17}/>
+                {busy ? <LoaderCircle className="spin" size={18}/> : <WandSparkles size={18}/>} {busy ? 'Gönderiliyor…' : '3D Model Üret'} <ChevronRight size={17}/>
               </button>
-              <p className="mini-disclaimer">{productionMode==='source' ? 'Workflow parametreleri aynen korunur' : 'Özel ayarlar kaynak reçeteden sapabilir'} · Tekli üretim · ComfyUI Desktop</p>
+              <p className="mini-disclaimer">{productionMode==='source' ? 'Workflow aynen korunur' : 'Özel ayarlar etkin'} · Tekli üretim</p>
             </div>
           </> : <>
             <div className="panel-heading"><div><span className="panel-id">LIB</span><h2>Model Arşivi</h2></div><Database size={17}/></div>
@@ -345,22 +374,21 @@ function App() {
           </>}
         </section>
         <section className="center-column">
-          <ModelViewport base64={glb} title={previewLabel} busy={viewLoading} expanded={viewExpanded} onToggleExpanded={() => setViewExpanded(!viewExpanded)} />
-          <div className="bottom-workspace">
-            <div className="log-card"><div className="card-heading"><div><Activity size={17}/><strong>Activity Monitor</strong></div><span className={job && ['running','queued','pending_result'].includes(job.status) ? 'live-status' : 'subdued'}>{job?.status.toUpperCase() || 'STANDBY'}</span></div>
-              <p>{job ? job.message : 'Hazır · Arşivden GLB seç veya Pixal3D üretimini başlat.'}</p>
-              {job && ['failed','no_output'].includes(job.status) && <button className="job-debug" type="button" onClick={() => void showJobDiagnostics()}>Tanı Kaydı Görüntüle</button>}
-              {job && <div className="job-bar"><div className={`job-bar-fill ${job.status === 'done' ? 'finished' : ''}`}/></div>}
-              <div className="log-footer"><span><Command size={13}/> ComfyUI / Queue</span><span>{job?.promptId.slice(0, 8) || 'No active prompt'}</span></div>
+          <ModelViewport base64={glb} title={previewLabel} busy={viewLoading} expanded={viewExpanded} onToggleExpanded={() => setViewExpanded(value => !value)} />
+          <div className="activity-strip" role="status" aria-live="polite">
+            <div className="activity-status"><span className={`activity-led ${job && ['queued','running','pending_result'].includes(job.status) ? 'is-busy' : job && ['failed','no_output'].includes(job.status) ? 'is-error' : ''}`}/>
+              <span className="activity-label">{job && ['queued','running','pending_result'].includes(job.status) ? 'Üretim sürüyor' : job && ['failed','no_output'].includes(job.status) ? 'Üretim hatası' : job?.status === 'done' ? 'Üretim tamamlandı' : 'Studio hazır'}</span>
+              <span className="activity-description">{job ? job.message : 'Arşivden bir model seç veya ComfyUI ile üret.'}</span>
             </div>
-            <div className="log-card compact"><div className="card-heading"><div><Database size={17}/><strong>Library</strong></div><span className="subdued">LOCAL</span></div>
-              <div className="library-count"><strong>{assets.length}</strong><span>saved assets</span></div>
-              <div className="log-footer"><span><Archive size={13}/> SQLite + immutable files</span></div>
+            <div className="activity-actions">
+              {job && ['failed','no_output'].includes(job.status) && <button className="activity-debug" type="button" onClick={() => void showJobDiagnostics()}>Tanı kaydı</button>}
+              <span className="activity-asset-count"><Archive size={13}/>{assets.length} model</span>
             </div>
           </div>
         </section>
         <section className="inspector-column">
-          <div className="panel-heading"><div><span className="panel-id">02</span><h2>Asset Inspector</h2></div><Gauge size={17}/></div>
+          <div className="panel-heading"><div><span className="panel-id">02</span><h2>Model Bilgileri</h2></div><Gauge size={17}/></div>
+          <div className="inspector-scroll">
           {selectedAsset ? <div className="inspector-block">
             <span className="section-label">SELECTED MODEL</span><h3>{selectedAsset.title}</h3>
             <div className="asset-meta"><span>{selectedAsset.engine}</span><span>{shortDate(selectedAsset.createdAt)}</span></div>
@@ -378,6 +406,7 @@ function App() {
             </button>
             <p className="mini-disclaimer">LOD geometrisi oluşturulur; yeniden normal/AO bake yapılmaz.</p>
           </div> : <div className="inspector-block"><div className="waiting-state"><Boxes size={30}/><strong>Bir model seç</strong><span>Geometri, PBR ve LOD ayrıntıları burada görünecek.</span></div></div>}
+          </div>
           <div className="system-panel"><div className="card-heading"><div><Cpu size={17}/><strong>GPU Telemetry</strong></div><span className="live-status">● LIVE</span></div>
             <p className="gpu-name">{gpu?.name || 'NVIDIA GPU'}</p><div className="gpu-line"><span>GPU</span><strong>{gpu?.utilPercent?.toFixed(0) ?? '—'}%</strong></div>
             <div className="mini-progress"><div style={{width: `${Math.min(100,gpu?.utilPercent ?? 0)}%`}} /></div>

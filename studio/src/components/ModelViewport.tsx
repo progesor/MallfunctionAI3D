@@ -18,17 +18,18 @@ function decode(base64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
-function LoadedObject({ binary, mode }: { binary: string; mode: ViewMode }) {
+function LoadedObject({ binary, mode, onError }: { binary: string; mode: ViewMode; onError: (message: string) => void }) {
   const [model, setModel] = useState<Group | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
     let alive = true;
+    setModel(null);
     const loader = new GLTFLoader();
     void loader.parseAsync(decode(binary), '').then((gltf) => {
-      if (alive) { setModel(gltf.scene); setError(''); }
-    }).catch((e: unknown) => { if (alive) setError(String(e)); });
-    return () => { alive = false; setModel(null); };
-  }, [binary]);
+      if (alive) { setModel(gltf.scene); setError(''); onError(''); }
+    }).catch((e: unknown) => { if (alive) { const message = String(e); setError(message); onError(message); } });
+    return () => { alive = false; };
+  }, [binary, onError]);
   const transform = useMemo(() => {
     if (!model) return { position: [0, 0, 0] as const, scale: 1 };
     const box = new Box3().setFromObject(model);
@@ -70,6 +71,7 @@ const viewOptions: Array<{ id: ViewMode; label: string; icon: typeof Eye }> = [
 
 export function ModelViewport({ base64, title, busy, expanded=false, onToggleExpanded }: Props) {
   const [mode, setMode] = useState<ViewMode>('pbr');
+  const [modelError, setModelError] = useState('');
   return (
     <div className="viewport-frame">
       <div className="viewport-toolbar">
@@ -81,7 +83,7 @@ export function ModelViewport({ base64, title, busy, expanded=false, onToggleExp
               <Icon size={14} /><span>{label}</span>
             </button>
           ))}
-          {onToggleExpanded && <button type="button" className="view-button expand-viewport" aria-label={expanded ? 'Görünümü küçült' : 'Görünümü büyüt'} title={expanded ? 'Görünümü küçült' : 'Görünümü tam genişlikte aç'} onClick={onToggleExpanded}>{expanded ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}</button>}
+          {onToggleExpanded && <button type="button" className="view-button expand-viewport" aria-label={expanded ? 'Görünümü küçült' : 'Görünümü büyüt'} title={expanded ? 'Görünümü küçült' : 'Görünümü tam genişlikte aç'} onClick={onToggleExpanded}>{expanded ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}<span>{expanded ? 'Çıkış (Esc)' : 'Tam ekran'}</span></button>}
         </div>
       </div>
       <div className="viewport-canvas">
@@ -94,9 +96,10 @@ export function ModelViewport({ base64, title, busy, expanded=false, onToggleExp
           <Grid position={[0, -0.08, 0]} args={[8, 8]} infiniteGrid sectionColor="#304152"
             cellColor="#233342" fadeDistance={20} fadeStrength={1.8} sectionSize={1} cellSize={0.25} />
           <axesHelper args={[0.75]} />
-          <Suspense fallback={null}>{base64 && <LoadedObject binary={base64} mode={mode} />}</Suspense>
+          <Suspense fallback={null}>{base64 && <LoadedObject binary={base64} mode={mode} onError={setModelError} />}</Suspense>
           <OrbitControls makeDefault minDistance={1} maxDistance={24} enableDamping dampingFactor={0.075} target={[0, 1.1, 0]} />
         </Canvas>
+        {base64 && modelError && <div className="viewport-error" role="alert"><strong>GLB açılamadı</strong><span>{modelError}</span></div>}
         {!base64 && <div className="viewport-empty">
           <div className="empty-visual"><Box size={35} strokeWidth={1.35} /></div>
           <strong>{busy ? 'GLB yükleniyor…' : '3D sahnesi hazır'}</strong>

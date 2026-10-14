@@ -25,3 +25,5 @@ studio/.env.local
 studio/*.log
 studio/**/*.sqlite3
 studio/**/*.sqlite3-*
+studio/playwright-report/
+studio/test-results/

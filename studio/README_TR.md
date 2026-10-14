@@ -1,6 +1,6 @@
-# Mallfunction AI3D Studio — M1 Desktop Foundation
+# Mallfunction AI3D Studio — M1.3 Workbench
 
-**Durum (2026-10-14):** Kaynak kod ve otomatik adapter testleri hazır. Resmî Pixal3D/TRELLIS.2 workflow'ları çalışan uygulamaya bağlandı; **Windows üzerindeki gerçek Tauri derlemesi, ComfyUI API kuyruğu ve Blender entegrasyonu henüz uçtan uca doğrulanmadı.** Bu aşama kurulum/entegrasyon testi bekleyen ilk geliştirici sürümüdür, production release değildir.
+**Durum (2026-10-14):** RTX 5080 istasyonunda Studio üzerinden referansla 3D üretimi, GLB görüntüleme ve Blender LOD kullanıcı tarafından çalışır durumda doğrulandı. **M1.3 yalnızca arayüz/yerleşim yenilemesidir**; mevcut başarılı üretim koduna müdahale etmez. Yeni arayüzün Windows üzerinde kullanıcı kabul testi bekleniyor. Ayrıntılar: `docs/WORKBENCH_UI.md` ve `../docs/AI3D_STUDIO_M1_3_UI_WORKBENCH_2026-10-14.md`.
 
 ## Hedef
 
@@ -67,3 +67,12 @@ Referans seçimi artık PNG/JPEG/WEBP görsel thumbnail'ı gösterir. Arşivdeki
 Test: `npm run test:adapter`, `npm run build`, `cargo test --lib`. Gerçek RTX 5080/ComfyUI karşılaştırması tamamlanmadan tam düzeldi kabul edilmez.
 
 Bkz: `docs/AI3D_STUDIO_M1_2_FIDELITY_UX_2026-10-14.md`.
+
+## M1.3 — Baştan düzenlenmiş çalışma alanı
+
+- Üç sütun şablonunun odak modunda aktif kalmasına neden olan CSS çakışması temizlendi. Görüntüleyici tam genişlikte açılır; Esc veya aynı düğmeyle eski düzene döner.
+- Sol ve sağ paneller ayrı ayrı açılıp gizlenebilir. Referans görsel seçici küçültülerek 3D görüntüleme alanı büyütüldü.
+- Üret butonu ayarlar uzun olsa da sabit görünür. Her panel bağımsız kaydırılır; GPU telemetrisi inspector altında sabit durur.
+- Üst başlık ve iş takip kartı sadeleştirildi; referans ve arşiv kontrolleri korundu.
+- Gerçek React arayüzünü farklı pencere boyutlarında test eden Playwright kontrolleri eklendi (`npm run test:ui`). CI Windows üzerinde React/Vite ve Rust kontrolleriyle birlikte çalışır.
+- **Workflow aynen** üretim yolu, model seed'leri, ComfyUI ayarları, arşiv ve Blender pipeline değişmedi. UI kontrolü için tekrar GPU üretimi yapılmasına gerek yok.
