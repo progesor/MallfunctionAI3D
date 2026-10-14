@@ -25,7 +25,7 @@ foreach ($item in $data.PSObject.Properties) {
     $outputNodes = @($entry.outputs.PSObject.Properties.Name) -join ','
     $saveInPrompt = $false
     try { $saveInPrompt = $null -ne $entry.prompt[2].'322' } catch {}
-    Write-Host ""`n$id status=$status completed=$completed save322=$saveInPrompt outputNodes=$outputNodes"
+    Write-Host "`n$id status=$status completed=$completed save322=$saveInPrompt outputNodes=$outputNodes"
     foreach ($m in @($entry.status.messages)) {
         if (@($m).Count -lt 2) { continue }
         if ($m[0] -eq 'execution_error') {
@@ -33,4 +33,4 @@ foreach ($item in $data.PSObject.Properties) {
         }
     }
 }
-Write-Host ""`nOnly share this report privately. It may include local paths and input names." -ForegroundColor DarkYellow
+Write-Host "`nOnly share this report privately. It may include local paths and input names." -ForegroundColor DarkYellow
