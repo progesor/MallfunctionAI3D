@@ -51,6 +51,23 @@ class TestBlenderLauncher(unittest.TestCase):
             self.assertIn('DRY RUN',stdout.getvalue())
             self.assertFalse(out.exists())
 
+    @unittest.skipIf(os.name == 'nt', 'fake executable uses a Unix shebang')
+    def test_background_runner_writes_expected_report(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            model=root/'model.glb'; model.write_bytes(b'glTF')
+            app=root/'blender.exe'
+            app.write_text('#!/usr/bin/env python3\nimport pathlib,sys\nargs=sys.argv\noutput=pathlib.Path(args[args.index("--outdir")+1])\nfor i in range(3): (output/f"PLAYBOX_FoxPlush_LOD{i}.glb").write_bytes(b"glTF")\n(output/"Blender_LOD_Report.json").write_text("{}")\nprint("OK faux Blender")\n',encoding='utf-8')
+            app.chmod(0o755)
+            out=root/'outputs'
+            with contextlib.redirect_stdout(io.StringIO()) as stdout:
+                result=main(['--blender',str(app),'--input',str(model),'--outdir',str(out)])
+            self.assertEqual(result,0)
+            self.assertTrue((out/'Blender_LOD_Report.json').is_file())
+            self.assertTrue((out/'Blender_Run.log').is_file())
+            self.assertIn('DONE:',stdout.getvalue())
+            self.assertEqual(len(list(out.glob('*.glb'))),3)
+
     def test_refuse_overwrite(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
