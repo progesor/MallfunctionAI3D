@@ -33,6 +33,15 @@ pub fn find_blender(settings: &StudioSettings) -> Option<String> {
     matches.first().map(|x|x.to_string_lossy().into_owned())
 }
 
+pub(crate) fn validate_lod_filename(name:&str) -> StudioResult<&str> {
+    if name.len()<5 || name.len()>80 || !name.ends_with(".glb") ||
+        !name.chars().all(|c|c.is_ascii_alphanumeric() || matches!(c,'_'|'-'|'.')) ||
+        name.starts_with('.') || name.contains("..") {
+        return Err("LOD dosya adı güvenli değil".into());
+    }
+    Ok(name)
+}
+
 fn lod_dir(asset_path:&str) -> StudioResult<PathBuf> {
     let root=Path::new(asset_path).parent().ok_or("Geçersiz asset arşiv yolu")?;
     Ok(root.join("lods"))
@@ -49,17 +58,21 @@ pub async fn blender_generate_lods(asset_id:String,state:State<'_,StudioState>)-
     let exe=find_blender(&state.current_settings()?).ok_or("Blender bulunamadı. Ayarlar > Blender.exe yolunu seç.")?;
     let worker_dir=state.app_dir.join("workers");
     fs::create_dir_all(&worker_dir).map_err(|e|e.to_string())?;
-    let worker=worker_dir.join("prepare_lods_v01.py");
+    let worker=worker_dir.join("prepare_lods_v02.py");
     // Pinned script shipped with application; never overwrite user scripts.
     if !worker.is_file() { fs::write(&worker,LOD_SCRIPT).map_err(|e|e.to_string())?; }
+    // Studio stores the immutable source model; export names are descriptive and safe.
+    let clean=asset.title.chars().map(|c|if c.is_ascii_alphanumeric() || c=='_' || c=='-' {c} else {'_'})
+        .take(48).collect::<String>();
+    let trimmed=clean.trim_matches('_');
+    let name=if trimmed.is_empty(){"Asset".to_string()}else{trimmed.to_string()};
     let output=lod_dir(&asset.file_path)?.join(Uuid::new_v4().to_string());
     fs::create_dir_all(&output).map_err(|e|e.to_string())?;
-    let mut command=Command::new(&exe);
-    command.kill_on_drop(true).arg("-b").arg("--python").arg(&worker)
-        .arg("--").arg("--input").arg(&asset.file_path).arg("--outdir").arg(&output);
-    let execution=tokio::time::timeout(std::time::Duration::from_secs(900),command.output())
-        .await.map_err(|_|"Blender 15 dakikalık zaman sınırını aştı; işlem durduruldu.".to_owned())?
-        .map_err(|e|format!("Blender başlatılamadı: {e}"))?;
+    let execution=Command::new(&exe).arg("-b").arg("--python").arg(&worker)
+        .arg("--").arg("--input").arg(&asset.file_path)
+        .arg("--outdir").arg(&output)
+        .arg("--name").arg(&name)
+        .output().await.map_err(|e|format!("Blender başlatılamadı: {e}"))?;
     let log=format!("{}\n{}",String::from_utf8_lossy(&execution.stdout),String::from_utf8_lossy(&execution.stderr));
     fs::write(output.join("Blender_Run.log"),&log).map_err(|e|e.to_string())?;
     if !execution.status.success() {
@@ -68,8 +81,11 @@ pub async fn blender_generate_lods(asset_id:String,state:State<'_,StudioState>)-
     let report:Value=serde_json::from_slice(&fs::read(output.join("Blender_LOD_Report.json")).map_err(|e|e.to_string())?)
         .map_err(|e|e.to_string())?;
     for idx in 0..3 {
-        if !output.join(format!("PLAYBOX_FoxPlush_LOD{idx}.glb")).is_file() {
-            return Err(format!("Blender LOD{idx} eksik; {}",output.display()));
+        let raw=report.pointer(&format!("/lods/{idx}/file")).and_then(Value::as_str)
+            .ok_or_else(||format!("Blender LOD{idx} dosya adı raporda eksik"))?;
+        let safe=validate_lod_filename(raw)?;
+        if !output.join(safe).is_file() {
+            return Err(format!("Blender LOD{idx} eksik: {raw}; {}",output.display()));
         }
     }
     let summary=json!({"assetId":asset_id,"lodDirectory":output,"report":report,
@@ -93,7 +109,10 @@ pub fn blender_read_lod(asset_id:String,index:u8,state:State<'_,StudioState>)->S
     if index>2{return Err("LOD index 0-2 olmalı".into());}
     let report=blender_lod_report(asset_id,state)?.ok_or("LOD henüz oluşturulmadı")?;
     let root=report.get("lodDirectory").and_then(Value::as_str).ok_or("LOD rapor yolu eksik")?;
-    let file=Path::new(root).join(format!("PLAYBOX_FoxPlush_LOD{index}.glb"));
+    let raw=report.pointer(&format!("/report/lods/{index}/file")).and_then(Value::as_str)
+        .ok_or("LOD rapor dosya adı eksik")?;
+    let name=validate_lod_filename(raw)?;
+    let file=Path::new(root).join(name);
     let bytes=fs::read(file).map_err(|e|e.to_string())?;
     if bytes.len()>100_000_000 {return Err("LOD GLB önizleme sınırını aşıyor".into());}
     Ok(STANDARD.encode(bytes))

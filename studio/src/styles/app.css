@@ -407,3 +407,37 @@ button { transition: background-color .14s ease, color .14s ease, border-color .
 .texture-export-history-row { display: flex; justify-content: space-between; align-items: center; min-height: 28px; font-size: 10px; color: #c5dedb; }
 .texture-export-history-row button { display: grid; place-items: center; width: 27px; height: 26px; background: #254b45; border: 1px solid #3b7065; border-radius: 5px; color: #c5efd9; }
 .texture-export-history-row button:hover { background: #367264; }
+
+/* M2.2 Unity URP: compact, non-destructive game staging exporter. */
+.unity-export-panel { margin-top: 5px; border: 1px solid #356052; border-radius: 11px; background: linear-gradient(148deg,#18332f,#142a33 78%); padding: 13px; display: flex; flex-direction: column; gap: 11px; min-width: 0; }
+.unity-export-title { display:flex; justify-content:space-between; align-items:center; color:#c9f7df; gap:8px; font-size:12px; }
+.unity-export-title > div { display:flex; gap:8px; align-items:center; }
+.unity-export-title button { background:transparent; color:#aad9be; display:grid; place-items:center; border:1px solid #416656; border-radius:6px; width:28px; height:28px; }
+.unity-export-title button:hover:not(:disabled) { background:#285947; }
+.unity-export-description, .unity-export-hint { font-size:10px; line-height:1.6; color:#a9c2c0; margin:0; }
+.unity-export-status { display:flex; flex-wrap:wrap; gap:6px; }
+.unity-export-status span { display:inline-flex; align-items:center; gap:5px; color:#d0b59d; background:#4b342575; border:1px solid #6b523d; border-radius:5px; padding:5px 7px; font-size:9px; font-weight:700; }
+.unity-export-status span.ready { background:#255344; color:#beefd2; border-color:#39705a; }
+.unity-export-status-dot { width:6px;height:6px; border-radius:50%; background:#d3aa7b; }
+.unity-export-lod-row { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+.unity-export-lod-row > span { display:flex; flex-direction:column; gap:2px; background:#0e222e; border-radius:6px; padding:8px; text-align:center; border:1px solid #304955; }
+.unity-export-lod-row small { color:#8aaebb; font-size:9px; }
+.unity-export-lod-row strong { color:#effaf7; font-size:12px; }
+.unity-export-select { display:flex; flex-direction:column; gap:7px; min-width:0; }
+.unity-export-select > span { font-size:9px; font-weight:750; letter-spacing:.08em; color:#a7c2bc; }
+.unity-export-select > div {position:relative;}
+.unity-export-select select {appearance:none; width:100%;min-width:0;padding:9px 27px 9px 9px; border:1px solid #426456;background:#0f2630;color:#d5e8e7;border-radius:7px;font-size:10px;text-overflow:ellipsis; }
+.unity-export-select svg {position:absolute;right:8px;top:10px;pointer-events:none;color:#9fbcb9;}
+.unity-export-action {min-height:38px; white-space:normal; text-align:center; line-height:1.3; border-color:#518775; color:#d1f9e4; background:#214a3c;}
+.unity-export-action:disabled {opacity:.55;cursor:not-allowed;}
+.unity-export-error {margin:0;color:#ffb9b4;font-size:10px;line-height:1.5; overflow-wrap:anywhere;}
+.unity-export-success {display:flex;flex-direction:column;gap:8px;background:#12372b;border:1px solid #4d8d6a;border-radius:8px;padding:10px;overflow-wrap:anywhere;}
+.unity-export-success > div:first-child {display:flex;gap:7px;align-items:center;font-size:11px;color:#c8fbe0;}
+.unity-export-savings {display:flex;flex-direction:column;gap:3px;font-size:11px;color:#d9f3ea;}
+.unity-export-savings small,.unity-export-success > small{color:#a9c6ba; font-size:9px;line-height:1.5;}
+.unity-export-success button {align-self:flex-start;display:flex;gap:7px;align-items:center;background:#265542;color:#ddffeb;border-radius:6px;padding:7px 9px;font-size:10px;}
+.unity-export-history {border-top:1px solid #36594d;padding-top:9px;display:flex;flex-direction:column;gap:6px;}
+.unity-export-history > strong {font-size:10px;color:#aacfc0;}
+.unity-export-history > button {display:flex;justify-content:space-between;align-items:center;min-width:0;gap:5px;border:1px solid #385d51;background:#142c30;border-radius:6px;padding:7px 8px;color:#bcddcd;font-size:9px;text-align:left;}
+.unity-export-history > button > span {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.unity-export-history > button:hover {background:#1a4439;}

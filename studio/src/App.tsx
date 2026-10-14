@@ -16,6 +16,7 @@ import { STUDIO_MODULES } from './lib/modules';
 import type { ModuleKind } from './lib/modules';
 import { ModelViewport } from './components/ModelViewport';
 import { TextureInspector } from './components/TextureInspector';
+import { UnityExportPanel } from './components/UnityExportPanel';
 import './styles/app.css';
 
 const initialSettings: Settings = {
@@ -83,6 +84,7 @@ function App() {
   const [viewLoading, setViewLoading] = useState(false);
   const [lod, setLod] = useState<LodResult | null>(null);
   const [lodLoading, setLodLoading] = useState(false);
+  const [textureExportRevision, setTextureExportRevision] = useState(0);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
@@ -394,7 +396,7 @@ function App() {
             <span className="section-label">SELECTED MODEL</span><h3>{selectedAsset.title}</h3>
             <div className="asset-meta"><span>{selectedAsset.engine}</span><span>{shortDate(selectedAsset.createdAt)}</span></div>
             <div className="stats-grid"><Metric label="TRIANGLES" value={selectedAsset.triangleCount.toLocaleString('en-US')}/><Metric label="VERTICES" value={selectedAsset.vertexCount.toLocaleString('en-US')}/><Metric label="MATERIALS" value={String(selectedAsset.materialCount)}/><Metric label="GLB SIZE" value={formatBytes(selectedAsset.fileSize)}/></div>
-            <TextureInspector glbBase64={glb} assetTitle={selectedAsset.title} assetId={selectedAsset.id} canExport={!/ \/ LOD\d+$/.test(previewLabel)} />
+            <TextureInspector glbBase64={glb} assetTitle={selectedAsset.title} assetId={selectedAsset.id} canExport={!/ \/ LOD\d+$/.test(previewLabel)} onExportComplete={() => setTextureExportRevision(x => x + 1)} />
             <div className="meta-row"><span>SHA256</span><code title={selectedAsset.sha256}>{selectedAsset.sha256.slice(0, 16)}…</code></div>
             <div className="meta-row"><span>Station</span><strong>{selectedAsset.station}</strong></div>
             <button type="button" className="btn btn-danger-subtle btn-full" onClick={()=>setAssetPendingDeletion(selectedAsset)}><Trash2 size={15}/> Arşivden kaldır</button>
@@ -407,6 +409,8 @@ function App() {
               {lodLoading?<LoaderCircle className="spin" size={16}/>:<SquareStack size={16}/>} {lodLoading ? 'Blender işliyor…' : lod ? 'Yeni LOD versiyonu oluştur' : 'Blender ile LOD oluştur'}
             </button>
             <p className="mini-disclaimer">LOD geometrisi oluşturulur; yeniden normal/AO bake yapılmaz.</p>
+            <div className="separator"/>
+            <UnityExportPanel asset={selectedAsset} lod={lod} refreshVersion={textureExportRevision} />
           </div> : <div className="inspector-block"><div className="waiting-state"><Boxes size={30}/><strong>Bir model seç</strong><span>Geometri, PBR ve LOD ayrıntıları burada görünecek.</span></div></div>}
           </div>
           <div className="system-panel"><div className="card-heading"><div><Cpu size={17}/><strong>GPU Telemetry</strong></div><span className="live-status">● LIVE</span></div>

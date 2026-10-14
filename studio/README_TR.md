@@ -98,3 +98,24 @@ izlenebilir. LOD önizlemesindeyken export kapalıdır; SRC seçilmelidir.
 
 **GPU sıkıştırma ve Unity otomatik materyal ataması bu aşamada yapılmaz.** Ayrıntılar:
 `docs/TEXTURE_EXPORT_M2_1.md`. Gerçek Windows/RTX 5080 çalıştırma testi beklemektedir.
+
+
+## M2.2 — Unity URP staging export (deneme aşaması)
+
+Tek materyalli bir asset için üç Blender LOD ve PBR Texture Export (tercihen 512/1024) tamamlandıktan sonra
+sağ panelde **Unity URP Game Export** açılır. Seçilen PBR sürümünden tek ortak doku seti
+(BaseColor, Normal, MetallicSmoothness, Occlusion) oluşturulur. 3 LOD GLB’den PBR tekrarları
+atılır; geometry-only LOD GLB dosyalarında vertex/normal/UV verileri korunur.
+
+Oluşan klasör: `.../assets/<asset-id>/unity_exports/urp_<timestamp>_<uuid>/`
+
+- `Meshes/LOD0.glb`, `LOD1.glb`, `LOD2.glb` — dokusuz geometri (LOD mesafe ayarlarını Unity yapacak).
+- `Textures/BaseColor.png`, `Normal.png`, `MetallicSmoothness.png`, `Occlusion.png` — ortak URP seti.
+- `unity_asset_manifest.json` — kaynak checksum, geometri, kanallar, önerilen URP materyal alanları ve dosya hash’leri.
+- `UNITY_URP_SETUP.txt` — Unity import notları.
+
+**Not:** Bu aşama Unity prefab üretmez. Unity'de GLB importu için glTFast veya başka bir
+glTF importeri gerekir. LODGroup, ortak materyal, collider ve normal map yönü gerçek Unity
+sahnesinde doğrulanmalıdır. Sadece tek materyalli statik mesh ve standard glTF desteklenir;
+animasyon, skin, sıkıştırılmış veya çok materyalli geometri sessizce bozulmak yerine reddedilir.
+Her export sürümü yenidir ve kaynak/LOD/önceki texture export dosyaları değiştirilmez.

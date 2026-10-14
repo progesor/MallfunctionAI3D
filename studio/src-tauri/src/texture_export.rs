@@ -69,7 +69,7 @@ fn check_png(data: &[u8], width: u32, height: u32) -> StudioResult<()> {
     Ok(())
 }
 
-fn owned_asset_dir(source: &str, asset_id: &str) -> StudioResult<PathBuf> {
+pub(crate) fn owned_asset_dir(source: &str, asset_id: &str) -> StudioResult<PathBuf> {
     Uuid::parse_str(asset_id).map_err(|_| "Geçersiz arşiv asset kimliği")?;
     let file = Path::new(source);
     if file.file_name().and_then(|x| x.to_str()) != Some("original.glb") {
@@ -89,7 +89,7 @@ fn owned_asset_dir(source: &str, asset_id: &str) -> StudioResult<PathBuf> {
     Ok(canonical)
 }
 
-fn verify_sha256(path: &Path, expected: &str) -> StudioResult<()> {
+pub(crate) fn verify_sha256(path: &Path, expected: &str) -> StudioResult<()> {
     let mut source = fs::File::open(path).map_err(|e| e.to_string())?;
     let mut hash = Sha256::new();
     let mut chunk = [0u8; 65_536];

@@ -1,6 +1,6 @@
 [package]
 name = "mallfunction-ai3d-studio"
-version = "0.2.1"
+version = "0.2.2"
 description = "Local AI 3D production studio — ComfyUI / Blender / asset library"
 edition = "2021"
 
@@ -24,3 +24,5 @@ uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
 base64 = "0.22"
 url = "2"
+
+image = { version = "0.25", default-features = false, features = ["png"] }

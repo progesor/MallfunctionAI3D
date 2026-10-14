@@ -9,7 +9,7 @@ import type { TexturePreset } from '../lib/texture-export';
 import { bridge } from '../lib/bridge';
 import type { TextureExportResult, TextureExportSummary } from '../lib/bridge';
 
-interface Props { glbBase64: string | null; assetTitle: string; assetId: string; canExport?: boolean }
+interface Props { glbBase64: string | null; assetTitle: string; assetId: string; canExport?: boolean; onExportComplete?: () => void }
 interface MapPreview { url: string; sourceUrl: string; width: number; height: number }
 
 async function extractPreview(image: TextureMap, originalUrl: string): Promise<MapPreview> {
@@ -46,7 +46,7 @@ const mapHints: Record<TextureRole, string> = {
   emissive: 'sRGB · Işınım',
 };
 
-export function TextureInspector({ glbBase64, assetTitle, assetId, canExport = true }: Props) {
+export function TextureInspector({ glbBase64, assetTitle, assetId, canExport = true, onExportComplete }: Props) {
   const inspection = useMemo<{ value?: GlbTextureInspection; error?: string }>(() => {
     if (!glbBase64) return {};
     try { return { value: inspectGlbTextures(decodeGlbBase64(glbBase64)) }; }
@@ -128,6 +128,7 @@ export function TextureInspector({ glbBase64, assetTitle, assetId, canExport = t
         throw new Error('Dışa aktarma sonucu beklenen haritaları doğrulamadı.');
       }
       setExported(saved);
+      onExportComplete?.();
       void bridge.textureExports(assetId).then(setExportHistory).catch(() => {});
     } catch (error) { setExportError(`Texture export başarısız: ${String(error)}`); }
     finally { setExportBusy(false); setExportProgress(''); }
