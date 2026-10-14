@@ -1,5 +1,6 @@
 /** Non-destructive PBR map export. Pure resizing is testable without a DOM. */
 import type { EmbeddedTexture, TextureMap, TextureRole } from './glb-inspector';
+import { encodeRgbaPng } from './png-encode';
 
 export type TexturePreset = 'source' | '1024' | '512' | '256';
 export type TextureExportFile = {
@@ -137,25 +138,6 @@ async function decodeImage(image: EmbeddedTexture): Promise<{ rgba: Uint8Clamped
   } finally { bitmap.close(); }
 }
 
-async function encodePng(rgba: Uint8ClampedArray, width: number, height: number): Promise<string> {
-  const canvas = document.createElement('canvas');
-  canvas.width = width; canvas.height = height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('PNG Canvas oluşturulamadı.');
-  const pixels = ctx.createImageData(width, height);
-  pixels.data.set(rgba);
-  ctx.putImageData(pixels, 0, 0);
-  const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(
-    value => value ? resolve(value) : reject(new Error('Texture PNG oluşturulamadı.')), 'image/png'));
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error('Texture PNG okunamadı.'));
-    reader.readAsDataURL(blob);
-  });
-  return dataUrl.split(',')[1] ?? '';
-}
-
 /** Only the chosen material's semantic roles are exported; unique glTF images can be shared. */
 export async function prepareTextureExports(
   maps: TextureMap[], preset: TexturePreset,
@@ -171,7 +153,7 @@ export async function prepareTextureExports(
     const pixels = resamplePbr(image.rgba, image.width, image.height, width, height, map.role, map.channel);
     files.push({ filename: mapFilename(map), role: map.role, materialIndex: map.materialIndex,
       sourceImageIndex: map.imageIndex, sourceChannel: map.channel, width, height,
-      contentBase64: await encodePng(pixels, width, height) });
+      contentBase64: await encodeRgbaPng(pixels, width, height) });
     onProgress?.(index + 1, maps.length);
   }
   if (new Set(files.map(x => x.filename)).size !== files.length) throw new Error('Tekrarlanan harita adı bulundu.');

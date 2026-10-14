@@ -300,6 +300,38 @@ public sealed class MallfunctionAI3DImporter : AssetPostprocessor
                 throw new InvalidOperationException("Shared material or renderer acceptance failed");
             if (m.geometry.collider == "Box" && !prefab.GetComponent<BoxCollider>())
                 throw new InvalidOperationException("Saved collider acceptance failed");
+            var storedGroup = prefab.GetComponent<LODGroup>();
+            var storedLods = storedGroup.GetLODs();
+            if (storedLods.Length != 3)
+                throw new InvalidOperationException("Saved prefab LODGroup missing three levels");
+            for (int i = 0; i < 3; i++)
+            {
+                if (storedLods[i].renderers.Length != 1 ||
+                    Mathf.Abs(storedLods[i].screenRelativeTransitionHeight - m.geometry.screenHeights[i]) > .0001f ||
+                    storedLods[i].renderers[0] == null ||
+                    storedLods[i].renderers[0].sharedMaterial != mat)
+                    throw new InvalidOperationException("Saved LODGroup renderer/threshold/material mismatch at LOD" + i);
+            }
+            bool urp = m.pipeline == "URP";
+            string expectedShader = urp ? "Universal Render Pipeline/Lit" : "HDRP/Lit";
+            if (mat.shader == null || mat.shader.name != expectedShader)
+                throw new InvalidOperationException("Saved prefab references wrong shader");
+            Texture mask = AssetDatabase.LoadAssetAtPath<Texture2D>(SafeFile(folder, m.textures.packedMask));
+            Texture albedo = AssetDatabase.LoadAssetAtPath<Texture2D>(SafeFile(folder, m.textures.baseColor));
+            Texture normal = AssetDatabase.LoadAssetAtPath<Texture2D>(SafeFile(folder, m.textures.normal));
+            if ((urp ? mat.GetTexture("_BaseMap") : mat.GetTexture("_BaseColorMap")) != albedo ||
+                (urp ? mat.GetTexture("_BumpMap") : mat.GetTexture("_NormalMap")) != normal ||
+                (urp ? mat.GetTexture("_MetallicGlossMap") : mat.GetTexture("_MaskMap")) != mask ||
+                (urp && mat.GetTexture("_OcclusionMap") != mask))
+                throw new InvalidOperationException("Saved material texture slots mismatch");
+            var baseImporter = AssetImporter.GetAtPath(SafeFile(folder, m.textures.baseColor)) as TextureImporter;
+            var normalImporter = AssetImporter.GetAtPath(SafeFile(folder, m.textures.normal)) as TextureImporter;
+            var maskImporter = AssetImporter.GetAtPath(SafeFile(folder, m.textures.packedMask)) as TextureImporter;
+            if (baseImporter == null || normalImporter == null || maskImporter == null ||
+                !baseImporter.sRGBTexture ||
+                normalImporter.textureType != TextureImporterType.NormalMap ||
+                maskImporter.sRGBTexture || maskImporter.alphaSource != TextureImporterAlphaSource.FromInput)
+                throw new InvalidOperationException("Saved texture import flags do not match linear mask / normal / sRGB contract");
             return new ImportReport { status = "UnityPrefabReady", assetId = m.assetId,
                 versionId = m.versionId, pipeline = m.pipeline, prefabPath = prefabPath,
                 materialPath = AssetDatabase.GetAssetPath(mat), lodTriangles = triangles,
