@@ -105,7 +105,10 @@ $requiredNodeNames = @('PrimitiveBoolean','PrimitiveInt','LoadImage','UNETLoader
     'VaeDecodeShapeTrellis','VaeDecodeTextureTrellis','Pixal3DConditioning','Trellis2Conditioning',
     'LoadMoGeModel','MoGeInference','LoadBackgroundRemovalModel','RemoveBackground','ComfySwitchNode',
     'RemeshMesh','DecimateMesh','UnwrapMesh','BakeTextureFromVoxel','BakeNormalMapFromMesh',
-    'BakeAmbientOcclusion','ApplyTextureToMesh','MeshToFile3D','Save3DAdvanced','Preview3DAdvanced')
+    'BakeAmbientOcclusion','ApplyTextureToMesh','MeshToFile3D','Save3DAdvanced','Preview3DAdvanced',
+    'CFGOverride','EmptyTrellis2LatentStructure','GetMeshInfo','ImageCropToMask','KSampler',
+    'MaskPreview','MeshSmoothNormals','MoGeGeometryToFOV','ModelSamplingSD3','PaintMesh',
+    'PreviewImage','RenderUVAtlas','RescaleCFG','VoxelToMesh')
 # Explicitly parse the HTTP response body. On some ComfyUI Desktop / Windows
 # PowerShell combinations, Invoke-RestMethod may return a String rather than
 # a PSCustomObject; in v0.1.1 that caused "Length" to be reported as the only
