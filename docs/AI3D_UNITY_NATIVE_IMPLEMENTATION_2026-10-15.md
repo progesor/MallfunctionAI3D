@@ -45,3 +45,13 @@ The helper invokes a real Unity Editor batch import and validates the saved impo
 ## Verification status at authorship
 
 Windows CI is triggered by branch pushes; Unity Editor and Blender are unavailable in this execution environment. No claim of a completed real Editor or material/shader acceptance test is made until logs and project paths are available.
+
+## 2026-10-15 · Unity 6 ModelImporter uyumluluk düzeltmesi
+
+- Unity 6'da `ModelImporter.importMaterials = false` artık derlenmez (`CS0619` / `CS0200`).
+- Doğru karşılığı: `mi.materialImportMode = ModelImporterMaterialImportMode.None;`.
+- Önceden HDRP/URP projesine aktarılmış varlıkların FBX/PNG dosyaları korunur. Unity projesindeki `Assets/MallfunctionAI3D/Editor/MallfunctionAI3DImporter.cs` dosyasındaki tek satır değiştirilerek Unity tekrar derlenir; `Tools > Mallfunction AI3D > Import pending assets` daha sonra bekleyen importları yeniden işler.
+- Sonraki Studio native export'unda yalnızca **önceki, tamamı byte-byte tanınan eski importer sürümü** otomatik olarak yedeklenip düzeltilir; farklı/özelleştirilmiş dosyalara dokunulmaz. Mevcut `.cs.meta` korunur.
+- Yedek dosyası `MallfunctionAI3DImporter.legacy_<hash>.cs.txt` olduğundan Unity ikinci bir C# scripti derlemez.
+- GitHub Actions, kullanıcı isteği üzerine **otomatik push CI olmaksızın**, yalnız `workflow_dispatch` ile çalışır. Bu düzeltmede Actions testleri tetiklenmez.
+- Test: `cargo test --manifest-path studio/src-tauri/Cargo.toml --lib unity6_importer_upgrade_is_exact_and_non_destructive` (Windows yerel, CI gerektirmez). Gerçek Unity HDRP Editor kabulü kullanıcı istasyonunda ayrıca yapılmalıdır.

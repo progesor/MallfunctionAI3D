@@ -155,7 +155,7 @@ public sealed class MallfunctionAI3DImporter : AssetPostprocessor
         AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
         var mi = AssetImporter.GetAtPath(path) as ModelImporter;
         if (mi == null) throw new InvalidOperationException("Unity ModelImporter missing for FBX");
-        mi.importMaterials = false;
+        mi.materialImportMode = ModelImporterMaterialImportMode.None;
         mi.importAnimation = false;
         mi.importCameras = false;
         mi.importLights = false;

@@ -1,8 +1,6 @@
 name: AI3D Studio Build Check
+# CI consumes Windows runner minutes. Run manually only when explicitly needed.
 on:
-  push:
-    branches:
-      - feat/desktop-studio-foundation
   workflow_dispatch:
 permissions:
   contents: read

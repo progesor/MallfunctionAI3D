@@ -120,6 +120,64 @@ fn write_new(path: &Path, content: &[u8]) -> StudioResult<()> {
         .map_err(|e| format!("Mevcut dosya asla ezilmeyecek ({}): {e}", path.display()))?;
     file.write_all(content).map_err(|e| e.to_string())
 }
+const UPDATED_IMPORT_MATERIAL_LINE: &str =
+    "mi.materialImportMode = ModelImporterMaterialImportMode.None;";
+const OLD_IMPORT_MATERIAL_LINE: &str = "mi.importMaterials = false;";
+
+/// The previously shipped Editor script differs by exactly one obsolete Unity
+/// API assignment. Recognize its *entire byte content*, not just one substring.
+fn is_known_legacy_importer(bytes: &[u8]) -> bool {
+    if !UNITY_IMPORTER.contains(UPDATED_IMPORT_MATERIAL_LINE) {
+        return false;
+    }
+    let previous = UNITY_IMPORTER.replacen(
+        UPDATED_IMPORT_MATERIAL_LINE, OLD_IMPORT_MATERIAL_LINE, 1,
+    );
+    previous != UNITY_IMPORTER && previous.as_bytes() == bytes
+}
+
+/// The user selected this Unity project explicitly in Studio. Update only the
+/// precise buggy revision we shipped, keeping its original bytes in a text
+/// backup (not a second compilable .cs file). Preserve the existing .cs.meta
+/// Unity GUID and never modify unrelated/custom Editor files.
+fn ensure_unity_importer(editor: &Path) -> StudioResult<()> {
+    fs::create_dir_all(editor).map_err(|e| e.to_string())?;
+    let importer = editor.join("MallfunctionAI3DImporter.cs");
+    if !importer.exists() {
+        return write_new(&importer, UNITY_IMPORTER.as_bytes());
+    }
+    let installed = fs::read(&importer).map_err(|e| e.to_string())?;
+    if installed == UNITY_IMPORTER.as_bytes() {
+        return Ok(());
+    }
+    if !is_known_legacy_importer(&installed) {
+        return Err(format!(
+            "Unity importer farklı veya kullanıcı tarafından düzenlenmiş; üzerine yazılmadı: {}. Mevcut dosyayı kontrol et.",
+            importer.display()
+        ));
+    }
+    let digest = sum_sha(&installed);
+    let backup = editor.join(format!(
+        "MallfunctionAI3DImporter.legacy_{}.cs.txt", &digest[..12]
+    ));
+    if backup.exists() {
+        return Err(format!("Unity importer eski sürüm yedeği zaten var; elle kontrol et: {}", backup.display()));
+    }
+    // Moving the .cs leaves its .cs.meta alongside the destination path,
+    // retaining Unity's script GUID when the corrected file is created.
+    fs::rename(&importer, &backup).map_err(|e| format!("Unity importer yedeklenemedi: {e}"))?;
+    if let Err(error) = write_new(&importer, UNITY_IMPORTER.as_bytes()) {
+        return match fs::rename(&backup, &importer) {
+            Ok(()) => Err(format!("Unity importer güncellenemedi; eski dosya geri alındı: {error}")),
+            Err(restore) => Err(format!(
+                "Unity importer güncellenemedi: {error}. Otomatik geri alma da başarısız: {restore}. Eski dosya: {}",
+                backup.display()
+            )),
+        };
+    }
+    Ok(())
+}
+
 fn assert_no_links(path: &Path, base: &Path) -> StudioResult<()> {
     let relative = path.strip_prefix(base).map_err(|_| "Unity hedefi Assets klasörü dışında")?;
     let mut current = base.to_path_buf();
@@ -302,19 +360,11 @@ fn native_export(
                 fs::copy(textures.join(name), target.join("Textures").join(name)).map_err(|e|e.to_string())?;
             }
             write_new(&target.join("unity_asset_manifest.json"), &json_bytes)?;
-            // Install importer ONCE; an incompatible existing copy is never overwritten.
+            // Update only our exact, known-broken importer revision; all
+            // custom/unknown scripts are protected against replacement.
             let editor = assets.join("MallfunctionAI3D").join("Editor");
             assert_no_links(&editor, &assets)?;
-            fs::create_dir_all(&editor).map_err(|e|e.to_string())?;
-            let importer = editor.join("MallfunctionAI3DImporter.cs");
-            if importer.is_file() {
-                let previous = fs::read(&importer).map_err(|e|e.to_string())?;
-                if previous != UNITY_IMPORTER.as_bytes() {
-                    return Err("Unity importer mevcut fakat farklı sürümde. Elle doğrulanmadan üzerine yazılmadı".into());
-                }
-            } else {
-                write_new(&importer, UNITY_IMPORTER.as_bytes())?;
-            }
+            ensure_unity_importer(&editor)?;
             // Save an explicit, immutable project pointer for status polling.
             let pointer = serde_json::to_vec_pretty(&json!({"folder":target,"project":unity_root,
                 "assetId":asset_id,"versionId":version_id,"pipeline":pipeline}))
@@ -430,6 +480,36 @@ mod tests {
         assert_eq!(pack_mask(&m,&r,&a,0.5,0.5).unwrap().get_pixel(0,0).0,[39,204,0,223]);
         assert!(pack_mask(&m,&RgbaImage::new(2,2),&a,1.,1.).is_err());
         assert!(pack_mask(&m,&r,&a,f32::NAN,1.).is_err());
+    }
+    #[test] fn unity6_importer_upgrade_is_exact_and_non_destructive() {
+        let dir = std::env::temp_dir().join(format!("ai3d_unity6_importer_{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("MallfunctionAI3DImporter.cs");
+        assert!(UNITY_IMPORTER.contains(UPDATED_IMPORT_MATERIAL_LINE));
+        assert!(!UNITY_IMPORTER.contains(OLD_IMPORT_MATERIAL_LINE));
+        let old = UNITY_IMPORTER.replacen(
+            UPDATED_IMPORT_MATERIAL_LINE, OLD_IMPORT_MATERIAL_LINE, 1,
+        );
+        assert!(is_known_legacy_importer(old.as_bytes()));
+        assert!(!is_known_legacy_importer(UNITY_IMPORTER.as_bytes()));
+
+        fs::write(&path, old.as_bytes()).unwrap();
+        ensure_unity_importer(&dir).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), UNITY_IMPORTER.as_bytes());
+        let backup = dir.join(format!(
+            "MallfunctionAI3DImporter.legacy_{}.cs.txt",
+            &sum_sha(old.as_bytes())[..12]
+        ));
+        assert_eq!(fs::read(&backup).unwrap(), old.as_bytes());
+        ensure_unity_importer(&dir).unwrap(); // idempotent
+
+        let custom = b"// User-owned Unity importer must never be replaced";
+        fs::write(&path, custom).unwrap();
+        assert!(!is_known_legacy_importer(custom));
+        assert!(ensure_unity_importer(&dir).is_err());
+        assert_eq!(fs::read(&path).unwrap(), custom);
+        assert_eq!(fs::read(&backup).unwrap(), old.as_bytes());
+        fs::remove_dir_all(&dir).unwrap();
     }
     #[test] fn profile_is_conservative() {
         let p=UnityProjectInfo {project_path:"a".into(),editor_version:"6000.0".into(),
