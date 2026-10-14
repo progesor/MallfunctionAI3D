@@ -1,32 +1,116 @@
 use crate::{models::{JobStatus, QueueRequest, WorkflowInfo}, storage::{StudioResult, StudioState}};
 use serde_json::{json, Value};
 use std::{fs, path::Path};
+use sha2::{Digest, Sha256};
 use tauri::State;
 use uuid::Uuid;
 
-const PIXAL: &str=include_str!("../../../workflows/Mallfunction_PLAYBOX_FoxPlush_pixal3d_pilot_v01.json");
-const TRELLIS: &str=include_str!("../../../workflows/Mallfunction_PLAYBOX_FoxPlush_trellis2_pilot_v01.json");
+const PIXAL_API: &str=include_str!("../../../workflows/PLAYBOX_FoxPlush_pixal3d_api_v01.json");
 
-pub fn workflow_json(id: &str) -> StudioResult<Value> {
-    let raw=match id { "pixal3d-fox"=>PIXAL, "trellis2-fox"=>TRELLIS,
-        _=>return Err("Bilinmeyen workflow kimliği.".into()) };
-    serde_json::from_str(raw).map_err(|e|e.to_string())
+fn validate_pilot_api(prompt:&Value)->StudioResult<()> {
+    let nodes=prompt.as_object().ok_or("ComfyUI API JSON nesnesi bekleniyor")?;
+    if nodes.len()<25 || nodes.len()>600 {return Err("API 3D workflow boyutu geçersiz".into());}
+    for (id,kind) in [("122","LoadImage"),("186","DecimateMesh"),("285","MeshToFile3D"),
+        ("316","PrimitiveBoolean"),("322","Save3DAdvanced")] {
+        if nodes.get(id).and_then(|n|n.get("class_type")).and_then(Value::as_str)!=Some(kind) {
+            return Err(format!("API workflow #{id} ({kind}) içermiyor. Tam Pixal3D/TRELLIS.2 API Export gerekli."));
+        }
+    }
+    let inputs=prompt.pointer("/322/inputs").ok_or("Save3DAdvanced girdileri eksik")?;
+    let link=inputs.get("model_3d").and_then(Value::as_array)
+        .ok_or("Save3DAdvanced 3D mesh bağlantısı yok; mask önizleme workflow'u desteklenmiyor")?;
+    if link.first().and_then(Value::as_str)!=Some("285") {
+        return Err("Save3DAdvanced #322, MeshToFile3D #285 düğümüne bağlı olmalı".into());
+    }
+    if !inputs.get("viewport_state").is_some_and(Value::is_object) {
+        return Err("Save3DAdvanced viewport_state nesnesi yok. ComfyUI'den 'API Format' olarak dışa aktar.".into());
+    }
+    if !prompt.pointer("/316/inputs/value").is_some_and(Value::is_boolean) {
+        return Err("Pixal3D/TRELLIS.2 motor seçimi #316 geçersiz".into());
+    }
+    Ok(())
 }
-
-#[tauri::command]
-pub fn get_workflows() -> Vec<WorkflowInfo> {
-    vec![
-        WorkflowInfo { id:"pixal3d-fox".into(),title:"Pixal3D • Image → PBR Model".into(),
-            description:"Resmî ComfyUI grafından türetilmiş PLAYBOX pilot profili".into(),
-            family:"Pixal3D".into(),version:"pilot-v01".into() },
-        WorkflowInfo { id:"trellis2-fox".into(),title:"TRELLIS.2 • Image → PBR Model".into(),
-            description:"Aynı resmî graf, alternatif geometri/PBR motoru".into(),
-            family:"TRELLIS.2".into(),version:"pilot-v01".into() },
-    ]
+fn builtin_api(id:&str)->StudioResult<Value> {
+    let mut prompt:Value=serde_json::from_str(PIXAL_API).map_err(|e|e.to_string())?;
+    validate_pilot_api(&prompt)?;
+    if id=="trellis2-fox" {prompt["316"]["inputs"]["value"]=json!(true);}
+    Ok(prompt)
 }
-
+fn imported_dir(state:&StudioState)->StudioResult<std::path::PathBuf> {
+    let directory=state.library_dir()?.join("workflows");
+    fs::create_dir_all(&directory).map_err(|e|e.to_string())?;
+    Ok(directory)
+}
+fn workflow_document(id:&str,state:&StudioState)->StudioResult<Value> {
+    if matches!(id,"pixal3d-fox"|"trellis2-fox") {
+        return Ok(json!({"format":"api","prompt":builtin_api(id)?}));
+    }
+    if !id.starts_with("api-")||id.len()!=20||!id[4..].chars().all(|c|c.is_ascii_hexdigit()) {
+        return Err("Bilinmeyen veya geçersiz workflow kimliği".into());
+    }
+    let path=imported_dir(state)?.join(format!("{id}.json"));
+    let contents=fs::read(&path).map_err(|e|format!("İçe aktarılan workflow bulunamadı: {e}"))?;
+    let stored:Value=serde_json::from_slice(&contents).map_err(|e|e.to_string())?;
+    let prompt=stored.get("prompt").ok_or("Arşiv workflow'u API grafı içermiyor")?;
+    validate_pilot_api(prompt)?;
+    Ok(json!({"format":"api","prompt":prompt}))
+}
 #[tauri::command]
-pub fn get_workflow_json(id: String) -> StudioResult<Value> { workflow_json(&id) }
+pub fn get_workflows(state:State<'_,StudioState>)->StudioResult<Vec<WorkflowInfo>> {
+    let mut items=vec![
+        WorkflowInfo{id:"pixal3d-fox".into(),title:"Pixal3D • Image → PBR Model".into(),
+            description:"ComfyUI API formatından doğrulanmış PLAYBOX pilot profili".into(),
+            family:"Pixal3D".into(),version:"api-v01".into()},
+        WorkflowInfo{id:"trellis2-fox".into(),title:"TRELLIS.2 • Image → PBR Model".into(),
+            description:"Aynı API grafı, TRELLIS.2 alternatif motor".into(),
+            family:"TRELLIS.2".into(),version:"api-v01".into()},
+    ];
+    for entry in fs::read_dir(imported_dir(&state)?).map_err(|e|e.to_string())? {
+        let entry=entry.map_err(|e|e.to_string())?;
+        if !entry.file_type().map_err(|e|e.to_string())?.is_file()
+          ||entry.path().extension().and_then(|e|e.to_str())!=Some("json"){continue;}
+        let Ok(raw)=fs::read(entry.path()) else {continue};
+        let Ok(manifest)=serde_json::from_slice::<Value>(&raw) else {continue};
+        let Some(id)=manifest.get("id").and_then(Value::as_str) else {continue};
+        if !id.starts_with("api-")||id.len()!=20||!id[4..].chars().all(|c|c.is_ascii_hexdigit()){continue;}
+        let Some(prompt)=manifest.get("prompt") else {continue};
+        if validate_pilot_api(prompt).is_err(){continue;}
+        let title=manifest.get("title").and_then(Value::as_str).unwrap_or("Imported API Workflow").to_owned();
+        let family=if prompt.pointer("/316/inputs/value").and_then(Value::as_bool)==Some(true){"TRELLIS.2"}else{"Pixal3D"};
+        items.push(WorkflowInfo{id:id.into(),title,description:"Yerel API export · salt okunur kaynak kopyası".into(),family:family.into(),version:"user-api".into()});
+    }
+    Ok(items)
+}
+#[tauri::command]
+pub fn get_workflow_json(id:String,state:State<'_,StudioState>)->StudioResult<Value>{
+    workflow_document(&id,&state)
+}
+#[tauri::command]
+pub fn comfy_import_api_workflow(path:String,state:State<'_,StudioState>)->StudioResult<WorkflowInfo>{
+    let source=Path::new(&path);
+    if !source.is_file() || source.extension().and_then(|v|v.to_str()).map(|v|v.to_ascii_lowercase())!=Some("json".into()) {
+        return Err(".json API export dosyası seç.".into());
+    }
+    if fs::metadata(source).map_err(|e|e.to_string())?.len()>8_000_000{return Err("Workflow 8 MB sınırını aşıyor".into());}
+    let data=fs::read(source).map_err(|e|e.to_string())?;
+    let parsed:Value=serde_json::from_slice(&data).map_err(|e|format!("API JSON okunamadı: {e}"))?;
+    let prompt=parsed.get("prompt").filter(|v|v.is_object()).unwrap_or(&parsed);
+    validate_pilot_api(prompt)?;
+    let canonical=serde_json::to_vec(prompt).map_err(|e|e.to_string())?;
+    let digest=format!("{:x}",Sha256::digest(&canonical));
+    let id=format!("api-{}",&digest[..16]);
+    let title=source.file_stem().and_then(|v|v.to_str()).unwrap_or("Imported API Workflow").chars().take(85).collect::<String>();
+    let target=imported_dir(&state)?.join(format!("{id}.json"));
+    if !target.exists() {
+        let manifest=json!({"id":id,"title":title,"sha256":digest,"sourceName":source.file_name().and_then(|v|v.to_str()),
+            "createdAt":chrono::Utc::now().to_rfc3339(),"prompt":prompt});
+        let mut writer=fs::OpenOptions::new().write(true).create_new(true).open(&target).map_err(|e|e.to_string())?;
+        use std::io::Write;
+        writer.write_all(&serde_json::to_vec_pretty(&manifest).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+    }
+    let family=if prompt.pointer("/316/inputs/value").and_then(Value::as_bool)==Some(true){"TRELLIS.2"}else{"Pixal3D"};
+    Ok(WorkflowInfo{id,title,description:"ComfyUI API export · arşivde korunan kopya".into(),family:family.into(),version:"user-api".into()})
+}
 
 fn endpoint(state: &StudioState, route: &str) -> StudioResult<String> {
     Ok(format!("{}{}",state.current_settings()?.comfy_url.trim_end_matches('/'),route))
@@ -80,13 +164,15 @@ pub async fn comfy_upload_image(path:String,state:State<'_,StudioState>) -> Stud
 
 #[tauri::command]
 pub async fn comfy_submit_job(request:QueueRequest,state:State<'_,StudioState>) -> StudioResult<JobStatus> {
-    workflow_json(&request.workflow_id)?; // Only allow registered production pipelines.
+    workflow_document(&request.workflow_id,&state)?; // Only allow registered local production recipes.
+    validate_pilot_api(&request.api_prompt)?;
     if !request.api_prompt.is_object() || request.api_prompt.as_object().is_none_or(|v|v.is_empty()) {
         return Err("ComfyUI API prompt JSON geçersiz.".into());
     }
     let client_id=Uuid::new_v4().to_string();
+    // ComfyUI API prompt is NOT a LiteGraph UI workflow; keep provenance separate.
     let body=json!({"prompt":request.api_prompt,"client_id":client_id,
-        "extra_data":{"extra_pnginfo":{"workflow":request.ui_workflow}}});
+        "extra_data":{"extra_pnginfo":{"ai3d_studio":{"workflowId":request.workflow_id,"format":"api"}}}});
     let response=state.client.post(endpoint(&state,"/prompt")?).json(&body)
         .send().await.map_err(|e|format!("ComfyUI kuyruğuna bağlanılamadı: {e}"))?;
     let status=response.status();
@@ -106,7 +192,7 @@ pub async fn comfy_submit_job(request:QueueRequest,state:State<'_,StudioState>) 
         "station":state.current_settings()?.station,
         "startedAt":chrono::Utc::now().to_rfc3339(),
         "config":request.config, "imageSourcePath":request.image_path,
-        "prompt":body["prompt"],"workflow":body["extra_data"]["extra_pnginfo"]["workflow"]});
+        "prompt":body["prompt"],"sourceApiWorkflow":request.ui_workflow});
     fs::write(dir.join("generation.json"),serde_json::to_vec_pretty(&summary).map_err(|e|e.to_string())?)
         .map_err(|e|e.to_string())?;
     let image_path=Path::new(&request.image_path);
