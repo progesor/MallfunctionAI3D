@@ -1,20 +1,28 @@
-# Mallfunction — ComfyUI → Unity 3D Asset Pilot v0.1.3
+# Mallfunction — ComfyUI → Unity 3D Asset Pilot v0.1.4
 
 **Hazırlanma tarihi:** 2026-10-14  
-**Durum:** 14 Ekim 2026 saat 15:54'te ComfyUI Desktop v0.40.0 (RTX 4070 Ti SUPER, 16 GB) için **43/43 çalıştırılabilir node + 7/7 model envanteri PASS**. Kullanıcı bu ComfyUI sisteminde daha önce başarılı 3D üretim yaptı; **bu repodaki özel Pixal3D/TRELLIS.2 pilot JSON'ları, Blender LOD ve Unity prefabı henüz çalıştırılmadı**. İkinci geliştirme istasyonu RTX 5080 16 GB; bu istasyon için güncel rapor yok.  
+**Durum:** ComfyUI Desktop 0.40.0, RTX 4070 Ti SUPER, **43/43 node + 7/7 model PASS**. PLAYBOX Fox Plush Pixal3D pilotundan **7.998 triangle / 1 materyal / 1024 PBR texture içeren gerçek GLB** üretildi; GPU ölçümü tamamlandı. Blender LOD ve Unity kabulü bekliyor. İkinci RTX 5080 istasyonu bu pilotta kullanılmadı.  
 **v0.1.1 düzeltmesi:** Windows PowerShell 5.1 ortamında audit scriptinin `param()` içinden `$PSScriptRoot` kullanması nedeniyle oluşan `Join-Path` hatası giderildi. ComfyUI Desktop kullanıcısı için `-DockerContainer` verilmesi gerekmez.
 **v0.1.2 düzeltmesi:** PowerShell 5.1 `/object_info` yanıtını kimi ortamlarda nesne yerine `Length` özelliği üzerinden okuduğu için 0/29 yanlış negatifi oluştu. Artık HTTP JSON açıkça parse ediliyor; gerekirse `/object_info/{node_class}` tekil sorgularına düşüyor. Doğrulanamayan düğümler `unknown` olarak işaretleniyor, `missing` sayılmıyor.
 
 **Güvenlik ilkesi:** Var olan çalışan Docker/WSL/ComfyUI kurulumu ve kurulu model ağırlıkları değiştirilmez; model ağırlıkları indirilmez; workflow'lar yalnızca bu ayrı klasöre hazırlanır. Batch üretim **etkin değildir**.
 
 
+### İlk Pixal3D Fox Plush — gerçek koşu PASS
+
+- 14 Ekim 2026'da orijinal tilki referansıyla **başarılı GLB/PBR üretimi** yapıldı. GLB: 3,339,600 byte; 7,998 triangle; 6,252 vertex; UV + normal + 1 materyal + 1024x1024 PBR texture.
+- GPU peak %100 / 15,014 MiB toplam VRAM kullanımı; GPU'yu tam yükte kullanmak **kullanıcının kabul ettiği koşul**. Üretim çoğunlukla **tekli**, batch varsayılanı kapalı.
+- Ayakta lokal deformasyon, yüzeyde texture/bake izleri mevcut; prototip için kabul edilebilir. Dokulu GLB'de ilk analizde görünen 168 index adası büyük ölçüde UV seam vertex ayrımı; konuma göre birleşik analizde 2 kapalı kabuk var. Kaynak GLB'ye müdahale yok.
+- Ayrıntılı teknik/görsel kayıt: docs/AI3D_PLAYBOX_FOX_FIRST_RUN_2026-10-14.md.
+- **Yeni pratik komut (Blender PATH'te olmasa da):** `.\04_Prepare-LODs.ps1 -DryRun` ve ardından `.\04_Prepare-LODs.ps1`. Otomatik kurulum yolunu bulamazsa `-BlenderPath "C:\GERCEK\YOL\blender.exe"` ile çalıştır. Üretici kaynak GLB'yi değiştirmez.
+
 ### Üretim kararı — 14 Ekim 2026
 
 - **Aktif istasyon:** RTX 4070 Ti SUPER 16 GB; ComfyUI Desktop 0.40.0; Windows 11; 64 GB RAM.
 - **İkinci istasyon:** RTX 5080 16 GB; bu istasyonun ComfyUI sürümü, model cache durumu ve node uyumluluğu ayrıca teyit edilecek. **İstasyon değişimi zorunlu değil.**
 - **Son denetim (15:54):** 43/43 çalıştırılabilir node ve 7/7 model ismi API ile doğrulandı. Bulk `/object_info` parsing, `Background` / `background` anahtar çakışmasından dolayı tekil node sorgularına düştü; 43/43 PASS. **Tekrar denetim gerekli değil.**
-- **Üretim durumu:** Kullanıcının ComfyUI'de geçmiş başarılı model üretimleri var. Ancak oyun için optimize edilmiş bu yeni Pixal3D pilotunun gerçek VRAM/GLB/PBR çıktısı henüz ölçülmedi.
-- **Bir sonraki iş:** `git pull` ile pilotu al, gerçek PLAYBOX tilki PNG'sini `LoadImage` üzerinden seç, `03_Monitor-Pilot.ps1 -Station 4070ti-super` ile ölçüm başlat, yalnız **Pixal3D** workflow'unu Queue'ya gönder.
+- **Üretim durumu:** Bu pilotun ilk Pixal3D GLB, PBR ve GPU ölçümleri tamamlandı; Blender LOD/Unity kabulü bekliyor.
+- **Bir sonraki iş:** Yeni Pixal3D üretimi gerekmiyor. `git pull`, `04_Prepare-LODs.ps1 -DryRun`, `04_Prepare-LODs.ps1` ile Blender LOD testini yap; hata/raporları kontrol et.
 - **Ham raporlar GitHub'a eklenmiyor**; sonuç özeti `docs/AI3D_AUDIT_2026-10-14.md`, istasyon planı `docs/WORKSTATIONS.md`.
 
 ## 1) Kurulum denetimi (aktif RTX 4070 istasyonunda tamamlandı)
@@ -89,6 +97,25 @@ py -3 .\tools\validate_glb.py "D:\Assets\PLAYBOX_FoxPlush_pixal3d.glb" --target-
 
 GLB denetimi: mesh/üçgen, UV (`TEXCOORD_0`), normal, materyal sayısı, gömülü resimler ve bağlanan base-color / metallic-roughness / normal / occlusion haritaları. Yanına `*.qc.json` yazar. **Geometrinin görsel doğruluğu, UV overlap, non-manifold ve tangent-space artefaktlarını doğrulamaz.** Bu nedenle yapısal rapor tek başına kalite kabulü sayılmaz.
 
+**Windows / ComfyUI Desktop / Blender GUI kullanıcıları için önerilen komut:** Blender uygulaması PATH'e ekli olmak zorunda değil. Yeni başlatıcı standart Blender kurulum klasörlerini ve mevcut PLAYBOX Pixal3D GLB'sini otomatik arar:
+
+```powershell
+cd C:\Works\MallfunctionAI3D
+git pull
+.\04_Prepare-LODs.ps1 -DryRun
+.\04_Prepare-LODs.ps1
+```
+
+Blender otomatik bulunamazsa gerçek blender.exe yolunu ver (örnek, dosyanın gerçekten bulunduğunu doğrula):
+
+```powershell
+.\04_Prepare-LODs.ps1 -BlenderPath "C:\Program Files\Blender Foundation\Blender 4.5\blender.exe"
+```
+
+Daha önceki bir testin üzerine yazmamak için çıktı klasörü tarih/saat eklenerek oluşturulur. Tam log `reports/FoxBlenderTest_*/Blender_Run.log` içine kaydedilir. Kaynak GLB değişmez; LOD görsel kabulü ayrıca gereklidir.
+
+**Manuel blender.exe çağrısı (alternatif):**
+
 Blender'da isteğe bağlı LOD taslağı (ilk gerçek modelden **sonra**):
 
 ```powershell
@@ -117,4 +144,4 @@ Pixal3D ilk başarılı GLB + GPU sonucu gelmeden TRELLIS.2 koşusuna veya batch
 
 ## Paket test durumu
 
-`python -m unittest discover -s tests -v`: 5 sentetik test geçti (workflow edit invariants, SHA, basic GLB parsing). Yerel GPU/Blender gerçek çalıştırma durumu: **bekliyor**. 43/43 node + 7/7 model API uyumluluğu ayrıca gerçek Windows ComfyUI Desktop ortamında doğrulandı; bunlar pilot üretim başarısı anlamına gelmez.
+`python -m unittest discover -s tests -v`: 11 sentetik test geçti (workflow edit invariants, SHA, basic GLB parsing). Yerel GPU/Pixal3D üretimi: **PASS**; Blender komut satırı üzerinden LOD çıktıları henüz doğrulanmadı. 43/43 node + 7/7 model API uyumluluğu ayrıca gerçek Windows ComfyUI Desktop ortamında doğrulandı; bunlar pilot üretim başarısı anlamına gelmez.
