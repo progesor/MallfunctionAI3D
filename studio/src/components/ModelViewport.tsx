@@ -6,10 +6,10 @@ import {
   Box3, Color, Group, Material, Mesh, MeshBasicMaterial, MeshNormalMaterial, MeshStandardMaterial,
   Vector3,
 } from 'three';
-import { Box, Eye, Scan, Grid2X2, Axis3D } from 'lucide-react';
+import { Box, Eye, Scan, Grid2X2, Axis3D, Maximize2, Minimize2 } from 'lucide-react';
 
 export type ViewMode = 'pbr' | 'clay' | 'wireframe' | 'normals';
-interface Props { base64: string | null; title?: string; busy: boolean }
+interface Props { base64: string | null; title?: string; busy: boolean; expanded?: boolean; onToggleExpanded?: () => void }
 
 function decode(base64: string): ArrayBuffer {
   const binary = atob(base64);
@@ -68,7 +68,7 @@ const viewOptions: Array<{ id: ViewMode; label: string; icon: typeof Eye }> = [
   { id: 'normals', label: 'Normals', icon: Axis3D },
 ];
 
-export function ModelViewport({ base64, title, busy }: Props) {
+export function ModelViewport({ base64, title, busy, expanded=false, onToggleExpanded }: Props) {
   const [mode, setMode] = useState<ViewMode>('pbr');
   return (
     <div className="viewport-frame">
@@ -81,6 +81,7 @@ export function ModelViewport({ base64, title, busy }: Props) {
               <Icon size={14} /><span>{label}</span>
             </button>
           ))}
+          {onToggleExpanded && <button type="button" className="view-button expand-viewport" aria-label={expanded ? 'Görünümü küçült' : 'Görünümü büyüt'} title={expanded ? 'Görünümü küçült' : 'Görünümü tam genişlikte aç'} onClick={onToggleExpanded}>{expanded ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}</button>
         </div>
       </div>
       <div className="viewport-canvas">
