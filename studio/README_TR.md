@@ -44,3 +44,19 @@ Yerel Windows arayüzünde referans yükle → workflow ve kalite seç → Comfy
 - `cd studio && npm run build`: TypeScript ve Vite (npm bağımlılıkları yüklüyse).
 - `cd studio/src-tauri && cargo check && cargo test`: Windows/Rust ortamında backend doğrulaması.
 - **Tam E2E kabul henüz bekleniyor:** Windows Tauri derlemesi, /object_info uyumu, /upload/image, /prompt, /history, GLB dosyası, Blender LOD; bu testler yapılana kadar 'uygulama tam çalışıyor' denmeyecek.
+
+## M1.1 hotfix (2026-10-14): API-export, hata tanısı, büyük viewport
+
+- Pixal3D/TRELLIS.2 üretiminin kaynağı artık **ComfyUI API Export JSON**; varsayılan kaynak kullanıcıdan doğrulanan 63 node'lu gerçek `Save3DAdvanced #322` grafıdır.
+- `ComfyUI API JSON İçe Aktar` düğmesinden kendi API JSON'unu ekle. `LoadImage`, `Save3DAdvanced` ve bağlantılı şekil/doku zinciri korunur. Üretim esnasında UI -> API yeniden derlemesi yapılmaz.
+- `Save3DAdvanced.viewport_state` nesne olarak korunur. Sadece maske üretimlerini reddetmek ve hata düğümünü göstermek için doğrulama/tanı eklendi.
+- ComfyUI Desktop RTX 5080 için raporlanan adres: `http://127.0.0.1:8191`. Settings -> Station etiketi `5080` olabilir.
+- Eski başarısız ComfyUI geçmişini yeni üretim yapmadan incelemek için kök klasörde `06_Diagnose-ComfyUI-Job.ps1` kullan:
+  ```powershell
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\06_Diagnose-ComfyUI-Job.ps1 -ComfyUrl "http://127.0.0.1:8191"
+  ```
+  `reports/ComfyHistory_*.json` oluşur. Bu dosyada yerel yollar ve kaynak görsel adları olabilir; herkese açık GitHub'a yükleme.
+- Üstteki gereksiz büyük başlık küçültüldü; GLB/3D Inspector görüntüleyici daha büyük ve tam genişlik moduna geçebiliyor.
+- Yeni CI testi: API-export regression, Windows Rust birim testleri. Gerçek RTX 5080 üretim kabulü henüz bu düzeltmeyle yapılmadı.
+
+Ayrıntılar: `docs/AI3D_STUDIO_M1_1_HOTFIX_2026-10-14.md`.
