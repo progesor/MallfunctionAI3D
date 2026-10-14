@@ -1,12 +1,12 @@
 {
   "name": "mallfunction-ai3d-studio",
-  "version": "0.1.3",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
-    "test:adapter": "node --experimental-strip-types src/tests/workflow.test.mjs && node --experimental-strip-types src/tests/pilot.test.mjs && node --experimental-strip-types src/tests/api-workflow.test.mjs && node --experimental-strip-types --test src/tests/glb-inspector.test.mjs",
+    "test:adapter": "node --experimental-strip-types src/tests/workflow.test.mjs && node --experimental-strip-types src/tests/pilot.test.mjs && node --experimental-strip-types src/tests/api-workflow.test.mjs && node --experimental-strip-types --test src/tests/glb-inspector.test.mjs && node --experimental-strip-types --test src/tests/texture-export.test.mjs",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",

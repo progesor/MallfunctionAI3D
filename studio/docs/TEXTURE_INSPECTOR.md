@@ -31,3 +31,33 @@ Texture export, editing/compression, new normal/AO baking, texture synthesis, Un
 5. Fullscreen the model, restore with Esc, and ensure Inspector still works. Avoid accepting the feature if any texture fails to display, selection is stale, or the viewport shrinks.
 
 **Known caveat:** Showing the map does not verify UV island overlaps, normal orientation or physically correct materials; these still require visual checks and Unity preview.
+
+
+## M2.1 — Texture Export / Optimize
+
+Seçili materyalin gömülü PBR haritaları Studio arşivinde ayrı, sürümlü ve yeni
+`assets/<uuid>/texture_exports/pbr_<timestamp>_<uuid>/` klasörüne PNG olarak kaydedilir.
+Orijinal `original.glb`, LOD dosyaları ve önceki export klasörleri değiştirilmez.
+
+Seçenekler: **Kaynak boyut**, 1024, 512, 256 piksel (uzun kenar üst sınırı; upscale yok).
+Farklı en-boy oranı korunur. Base Color/emissive küçültme lineer ışıkta, premultiplied alpha
+ile uygulanır. Normal map küçültme vektör ortalaması/renormalizasyon kullanır.
+AO R, Roughness G, Metallic B kanalları ayrı grayscale PNG'lere çıkarılır.
+Kaynağın orijinal packed MR/ORM yapısı GLB içinde korunur.
+
+Her export klasöründe `texture_export_manifest.json`: kaynak GLB SHA256, preset,
+oluşturulan PNG'lerin checksum/boyut/kanal/materyal bilgisi bulunur.
+Sunulan dışa aktarım Unity'nin materyallerine **otomatik uygulanmaz**. Bu manuel
+PBR/texture optimizasyonun ilk aşamasıdır, bitmiş Unity export pipeline'ı değildir.
+Kullanıcının çoğunlukla tekli üretim tercihi korunur, batch eklenmez.
+
+### Sınırlar
+
+- Şu an glTF içindeki gömülü PNG/JPEG/WebP haritaları desteklenir. Harici dosya
+  bağlantılarına internet erişimi yapılmaz.
+- Her seferde seçili tek materyal (en fazla 16 rol) ve seçili GLB önizlemesi dışa aktarılır.
+- Çıktı her zaman PNG'dir; KTX2/BC7/ASTC gibi GPU sıkıştırması daha sonra
+  Unity importer profiline bağlı olarak yapılmalıdır. PNG dosya boyutunun küçük
+  olması GPU belleği açısından otomatik kazanım anlamına gelmez.
+- Studio'nun backend'i çıktı dizini sahipliğini, PNG başlığını ve dosya boyutunu
+  doğrular; harici GLB kaynağına yazmaz.

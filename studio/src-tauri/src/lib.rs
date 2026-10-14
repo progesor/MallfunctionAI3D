@@ -3,6 +3,7 @@ mod commands;
 mod comfy;
 mod models;
 mod storage;
+mod texture_export;
 
 use tauri::Manager;
 
@@ -21,6 +22,8 @@ pub fn run() {
             commands::list_assets,
             commands::import_model_file,
             commands::read_asset_glb,
+            texture_export::export_asset_textures,
+            texture_export::list_asset_texture_exports,
             commands::read_reference_preview,
             commands::move_asset_to_trash,
             commands::get_asset_manifest,

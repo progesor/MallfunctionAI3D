@@ -1,6 +1,6 @@
 [package]
 name = "mallfunction-ai3d-studio"
-version = "0.1.3"
+version = "0.2.1"
 description = "Local AI 3D production studio — ComfyUI / Blender / asset library"
 edition = "2021"
 

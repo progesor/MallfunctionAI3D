@@ -82,3 +82,19 @@ Bkz: `docs/AI3D_STUDIO_M1_2_FIDELITY_UX_2026-10-14.md`.
 Mevcut varlığı **Model Arşivi** üzerinden seçtikten sonra sağdaki **Model Bilgileri → PBR Texture Inspector** bölümünde GLB'ye gömülü gerçek PBR haritaları açılır. Base Color ve Normal orijinal renkli görünür; Roughness (G), Metallic (B), AO (R) packed haritadan gri kanal olarak ayrılır. Kartı tıklayarak haritayı büyük açabilir, **Packed orijinali göster** seçeneğiyle karşılaştırabilirsin. Birden fazla materyal varsa materyal seçici görüntülenir.
 
 Bu aşamada texture düzeltme, yeniden bake veya sıkıştırma yapmıyoruz; **kaynak GLB her zaman korunur**. Referans üretim/ComfyUI workflow davranışı, Blender LOD ve M1.3 tam ekran görünümü değiştirilmedi. Kontrol adımları `docs/TEXTURE_INSPECTOR.md` içinde.
+
+## M2.1 — PBR Texture Export / Optimize
+
+Kullanıcı RTX 5080'de GLB'den ayrıştırılan tüm PBR map'lerin doğru açıldığını doğruladı.
+**Model Bilgileri → PBR Texture Inspector → Texture Export** altında seçili materyal
+haritaları ayrı PNG dosyaları olarak kaydedilebilir. Kaynak / 1024 / 512 / 256 px
+uzun kenar profilleri vardır. Roughness (G), Metallic (B), AO (R) ayrı gri kanal;
+Base Color ve Normal ayrı renkli PNG olarak dışa aktarılır.
+
+Her işlem, Studio'nun **immutable orijinal GLB'sini değiştirmeden** yeni sürümlü
+`texture_exports` klasörüne kaydedilir. Manifest PNG SHA256, kaynak GLB SHA256,
+çözünürlük, materyal ve kaynak kanal bilgisini içerir. Son ihracatlar arayüzden
+izlenebilir. LOD önizlemesindeyken export kapalıdır; SRC seçilmelidir.
+
+**GPU sıkıştırma ve Unity otomatik materyal ataması bu aşamada yapılmaz.** Ayrıntılar:
+`docs/TEXTURE_EXPORT_M2_1.md`. Gerçek Windows/RTX 5080 çalıştırma testi beklemektedir.

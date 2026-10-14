@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { ObjectInfo, ApiPrompt } from './workflow';
 import type { WorkflowDocument } from './api-workflow';
+import type { TextureExportFile, TexturePreset } from './texture-export';
 
 export interface Settings {
   comfyUrl: string;
@@ -51,6 +52,8 @@ export interface GpuStats {
   temperatureC: number | null;
 }
 export type LodResult = { assetId: string; lodDirectory: string; report: { lods: Array<{ triangles: number; file_bytes: number }> }; generatedAt: string };
+export interface TextureExportSummary { outputDir: string; preset: string; generatedAt: string; mapCount: number }
+export interface TextureExportResult { outputDir: string; manifestPath: string; files: Array<{ filename: string; role: string; width: number; height: number; fileBytes: number; sha256: string }>; sourceUntouched: boolean };
 
 export const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -72,6 +75,8 @@ export const bridge = {
   importGlb: (path: string) => invoke<Asset>('import_model_file', { path }),
   assetBinary: (assetId: string) => invoke<string>('read_asset_glb', { assetId }),
   assetManifest: (assetId: string) => invoke<Record<string, unknown>>('get_asset_manifest', { assetId }),
+  exportTextures: (assetId: string, preset: TexturePreset, files: TextureExportFile[]) => invoke<TextureExportResult>('export_asset_textures', { assetId, preset, files }),
+  textureExports: (assetId: string) => invoke<TextureExportSummary[]>('list_asset_texture_exports', { assetId }),
   referencePreview: (path: string) => invoke<string>('read_reference_preview', { path }),
   trashAsset: (assetId: string) => invoke<string>('move_asset_to_trash', { assetId }),
   generateLods: (assetId: string) => invoke<LodResult>('blender_generate_lods', { assetId }),

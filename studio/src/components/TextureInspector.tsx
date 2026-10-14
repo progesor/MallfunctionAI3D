@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, Image as ImageIcon, Layers3, Maximize2, X } from 'lucide-react';
+import { ChevronDown, Image as ImageIcon, Layers3, LoaderCircle, Maximize2, Save, X, Copy, Check } from 'lucide-react';
 import {
   decodeGlbBase64, grayscaleChannel, inspectGlbTextures, MAP_LABELS,
 } from '../lib/glb-inspector';
 import type { TextureMap, TextureRole, GlbTextureInspection } from '../lib/glb-inspector';
+import { prepareTextureExports } from '../lib/texture-export';
+import type { TexturePreset } from '../lib/texture-export';
+import { bridge } from '../lib/bridge';
+import type { TextureExportResult, TextureExportSummary } from '../lib/bridge';
 
-interface Props { glbBase64: string | null; assetTitle: string }
+interface Props { glbBase64: string | null; assetTitle: string; assetId: string; canExport?: boolean }
 interface MapPreview { url: string; sourceUrl: string; width: number; height: number }
 
 async function extractPreview(image: TextureMap, originalUrl: string): Promise<MapPreview> {
@@ -42,7 +46,7 @@ const mapHints: Record<TextureRole, string> = {
   emissive: 'sRGB · Işınım',
 };
 
-export function TextureInspector({ glbBase64, assetTitle }: Props) {
+export function TextureInspector({ glbBase64, assetTitle, assetId, canExport = true }: Props) {
   const inspection = useMemo<{ value?: GlbTextureInspection; error?: string }>(() => {
     if (!glbBase64) return {};
     try { return { value: inspectGlbTextures(decodeGlbBase64(glbBase64)) }; }
@@ -54,9 +58,23 @@ export function TextureInspector({ glbBase64, assetTitle }: Props) {
   const [previewError, setPreviewError] = useState('');
   const [zoomedMap, setZoomedMap] = useState<string | null>(null);
   const [viewPacked, setViewPacked] = useState(false);
+  const [exportPreset, setExportPreset] = useState<TexturePreset>('source');
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportProgress, setExportProgress] = useState('');
+  const [exportError, setExportError] = useState('');
+  const [exported, setExported] = useState<TextureExportResult | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [exportHistory, setExportHistory] = useState<TextureExportSummary[]>([]);
   const items = useMemo(() => inspection.value?.maps.filter(item => item.materialIndex === materialIndex) ?? [],
     [inspection.value, materialIndex]);
-  useEffect(() => { setMaterialIndex(0); setZoomedMap(null); setViewPacked(false); }, [glbBase64]);
+  useEffect(() => { setMaterialIndex(0); setZoomedMap(null); setViewPacked(false); setExported(null); setExportError(''); }, [glbBase64]);
+  useEffect(() => {
+    let active = true;
+    setExportHistory([]);
+    if (!assetId) return () => { active = false; };
+    void bridge.textureExports(assetId).then(items => { if (active) setExportHistory(items); }).catch(() => {});
+    return () => { active = false; };
+  }, [assetId]);
 
   useEffect(() => {
     let stopped = false;
@@ -97,6 +115,29 @@ export function TextureInspector({ glbBase64, assetTitle }: Props) {
     return () => window.removeEventListener('keydown', escape);
   }, [zoomedMap]);
 
+  async function exportMaps() {
+    if (exportBusy || !assetId || !items.length || !canExport) return;
+    setExportError(''); setExported(null); setExportBusy(true); setCopied(false);
+    try {
+      setExportProgress('PBR haritaları hazırlanıyor…');
+      const files = await prepareTextureExports(items, exportPreset,
+        (completed, total) => setExportProgress(`PNG hazırlanıyor ${completed}/${total}`));
+      setExportProgress('Texture dosyaları arşive kaydediliyor…');
+      const saved = await bridge.exportTextures(assetId, exportPreset, files);
+      if (!saved.sourceUntouched || saved.files.length !== files.length) {
+        throw new Error('Dışa aktarma sonucu beklenen haritaları doğrulamadı.');
+      }
+      setExported(saved);
+      void bridge.textureExports(assetId).then(setExportHistory).catch(() => {});
+    } catch (error) { setExportError(`Texture export başarısız: ${String(error)}`); }
+    finally { setExportBusy(false); setExportProgress(''); }
+  }
+  async function copyExportPath() {
+    if (!exported) return;
+    try { await navigator.clipboard.writeText(exported.outputDir); setCopied(true); }
+    catch { setExportError('Panoya kopyalanamadı. Klasör yolunu alttan elle kopyalayabilirsin.'); }
+  }
+
   if (!glbBase64) return null;
   const info = inspection.value;
   const selectedMap = items.find(item => item.key === zoomedMap);
@@ -124,6 +165,30 @@ export function TextureInspector({ glbBase64, assetTitle }: Props) {
           {previewError && <p className="texture-inspector-error">{previewError}</p>}
           {!!info.warnings.length && <p className="texture-inspector-note">{info.warnings.join(' ')}</p>}
           <p className="texture-inspector-note">Roughness (G), Metallic (B), AO (R) kanalları gömülü packed map'ten ayrılarak gösterilir. Kaynak GLB değiştirilmez.</p>
+          <div className="texture-export-panel" data-testid="texture-export-panel">
+            <div className="texture-export-head"><Save size={15}/><strong>Texture Export</strong></div>
+            <label className="texture-export-select"><span>MAX ÇÖZÜNÜRLÜK</span><select aria-label="Texture export çözünürlüğü" value={exportPreset} disabled={exportBusy} onChange={e=>setExportPreset(e.target.value as TexturePreset)}>
+              <option value="source">Kaynak boyut</option><option value="1024">1024 px</option><option value="512">512 px</option><option value="256">256 px</option>
+            </select></label>
+            <button type="button" className="btn btn-outline btn-full texture-export-button" disabled={exportBusy || !assetId || !canExport || loading || items.length===0} onClick={()=>void exportMaps()}>
+              {exportBusy?<LoaderCircle className="spin" size={15}/>:<Save size={15}/>} {exportBusy?'Haritalar hazırlanıyor…':`${items.length} PBR haritasını dışa aktar`}
+            </button>
+            {!canExport && <p className="texture-inspector-note">LOD varyantını inceliyorsun. Dışa aktarmak için SRC (orijinal GLB) görünümüne dön.</p>}
+            {exportProgress && <p className="texture-inspector-loading" role="status">{exportProgress}</p>}
+            {exportError && <p className="texture-inspector-error" role="alert">{exportError}</p>}
+            {exported && <div className="texture-export-result" role="status"><div><Check size={14}/><strong>{exported.files.length} PNG kaydedildi</strong></div>
+              <p>Yeni ve ayrı bir klasörde; kaynak GLB korunuyor.</p><code title={exported.outputDir}>{exported.outputDir}</code>
+              <button type="button" className="btn btn-ghost btn-full" onClick={()=>void copyExportPath()}><Copy size={14}/>{copied?'Yol kopyalandı':'Klasör yolunu kopyala'}</button>
+            </div>}
+            {!!exportHistory.length && <div className="texture-export-history"><span>SON DIŞA AKTARIMLAR</span>
+              {exportHistory.slice(0,3).map((item, index) => <div key={`${item.outputDir}:${index}`} className="texture-export-history-row">
+                <span>{item.preset === 'source' ? 'Kaynak' : `${item.preset}px`} · {item.mapCount} harita</span>
+                <button type="button" title={item.outputDir} onClick={() => { void navigator.clipboard?.writeText(item.outputDir).then(()=>setCopied(true)).catch(()=>setExportError('Klasör yolu panoya kopyalanamadı.')); }} aria-label="Export klasörü yolunu kopyala"><Copy size={13}/></button>
+              </div>)}
+            </div>}
+            <p className="texture-inspector-note">AO (R), Roughness (G), Metallic (B) ayrı gri tonlu PNG olarak dışa aktarılır. Renk haritası sRGB; normal haritası küçültüldüğünde normalize edilir. Her dışa aktarım yeni sürümdür.</p>
+          </div>
+
         </>}
     {selectedMap && selectedPreview && <div className="texture-lightbox" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setZoomedMap(null); }}>
       <div className="texture-lightbox-panel" role="dialog" aria-modal="true" aria-label={`${MAP_LABELS[selectedMap.role]} haritası`}>

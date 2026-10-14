@@ -62,3 +62,47 @@ test('embedded PBR map cards show original/packed channels and enlarged preview'
   await page.getByRole('button',{name:'Texture önizlemesini kapat'}).click();
   await expect(page.getByRole('dialog',{name:/Roughness haritası/})).not.toBeVisible();
 });
+
+test('texture export creates a new immutable map set and keeps viewport usable', async ({page})=>{
+  await page.setViewportSize({width:1480,height:920});
+  const glb=pbrFixture();
+  await page.addInitScript(({base64,savedAsset})=>{
+    const calls: unknown[] = [];
+    (window as unknown as {__textureExportCalls: unknown[]}).__textureExportCalls = calls;
+    (window as unknown as {__TAURI_INTERNALS__:unknown}).__TAURI_INTERNALS__={
+      invoke:async(command:string, args?:Record<string,unknown>)=>{
+        switch(command){
+          case 'get_environment':return {settings:{comfyUrl:'http://127.0.0.1:8191',station:'5080',blenderPath:'',libraryRoot:''},appDataPath:'C:\\Test',detectedBlender:null,source:'desktop'};
+          case 'get_workflows':return [];
+          case 'list_assets':return [savedAsset];
+          case 'comfy_health':return {};
+          case 'gpu_snapshot':return {name:'NVIDIA GeForce RTX 5080',index:0,vramTotalMiB:16376,vramUsedMiB:1200,utilPercent:0,temperatureC:32};
+          case 'read_asset_glb':return base64;
+          case 'blender_lod_report':return null;
+          case 'export_asset_textures':{
+            calls.push({assetId:args?.assetId,preset:args?.preset,files:(args?.files as Array<{filename:string,width:number,height:number,contentBase64:string}>)?.map(x=>({filename:x.filename,width:x.width,height:x.height,bytes:x.contentBase64.length}))});
+            return {outputDir:'C:\\Test\\library\\assets\\fox-test\\texture_exports\\pbr-test', manifestPath:'C:\\Test\\manifest.json', sourceUntouched:true,
+              files:((args?.files??[]) as Array<{filename:string,width:number,height:number}>).map(x=>({filename:x.filename,role:'PBR',width:x.width,height:x.height,fileBytes:300,sha256:'test'}))};
+          }
+          default:throw new Error('IPC unavailable in e2e mock: '+command);
+        }
+      },
+    };
+  },{base64:glb,savedAsset:asset});
+  await page.goto('/');
+  await page.getByRole('button',{name:/Asset Library/}).click();
+  await page.getByRole('button',{name:/PLAYBOX Fox Plush/}).first().click();
+  await expect(page.getByTestId('texture-export-panel')).toBeVisible();
+  await page.getByRole('combobox',{name:'Texture export çözünürlüğü'}).selectOption('512');
+  await page.getByRole('button',{name:/5 PBR haritasını dışa aktar/}).click();
+  await expect(page.getByText('5 PNG kaydedildi')).toBeVisible();
+  const calls=await page.evaluate(()=>(window as unknown as {__textureExportCalls:unknown[]}).__textureExportCalls);
+  expect(calls).toHaveLength(1);
+  const record=calls[0] as {assetId:string,preset:string,files:Array<{filename:string,width:number,height:number,bytes:number}>};
+  expect(record.assetId).toBe('fox-test');
+  expect(record.preset).toBe('512');
+  expect(record.files).toHaveLength(5);
+  expect(record.files.every(x=>x.width<=512 && x.height<=512 && x.bytes>0)).toBe(true);
+  expect(record.files.map(x=>x.filename)).toEqual(['m0_baseColor.png','m0_normal.png','m0_roughness.png','m0_metallic.png','m0_occlusion.png']);
+  await expect(page.locator('.viewport-frame')).toBeVisible();
+});
