@@ -113,7 +113,7 @@ export function TextureInspector({ glbBase64, assetTitle }: Props) {
           </select><ChevronDown size={14}/></span></label>}
           <div className="texture-map-grid">{items.map(item => {
             const preview = previews[item.key];
-            return <button type="button" key={item.key} className="texture-map-card" disabled={!preview}
+            return <button type="button" key={item.key} className="texture-map-card" aria-label={`${MAP_LABELS[item.role]} haritasını büyüt`} disabled={!preview}
               onClick={() => { setZoomedMap(item.key); setViewPacked(false); }} title={`${MAP_LABELS[item.role]} haritasını büyüt`}>
               <span className="texture-map-thumb">{preview ? <img src={preview.url} alt={`${MAP_LABELS[item.role]} kanalı`} loading="lazy"/> : <ImageIcon size={23}/>}</span>
               <span className="texture-map-title">{MAP_LABELS[item.role]}</span>
