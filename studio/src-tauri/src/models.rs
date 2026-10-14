@@ -13,7 +13,7 @@ impl Default for StudioSettings {
         Self {
             comfy_url:"http://127.0.0.1:8188".to_owned(),
             blender_path:String::new(),
-            station:"4070ti-super".to_owned(),
+            station:"local".to_owned(),
             library_root:String::new(),
         }
     }
