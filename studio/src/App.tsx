@@ -2,12 +2,13 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Activity, Archive, ArrowDownToLine, ArrowUpRight, Box, Boxes, Check, ChevronDown, ChevronRight,
   CircleAlert, CircleCheck, CloudCog, Command, Cpu, Database, FileBox, FolderOpen, Gauge, Image as ImageIcon,
-  Layers3, LoaderCircle, Monitor, PackageCheck, Plus, RotateCcw, Save, Settings2,
+  Layers3, LoaderCircle, Monitor, PackageCheck, Plus, RotateCcw, Save, Settings2, Upload,
   SlidersHorizontal, Sparkles, SquareStack, WandSparkles, X,
 } from 'lucide-react';
 import { bridge, formatBytes, isTauri, shortDate } from './lib/bridge';
 import type { Asset, Environment, GpuStats, JobStatus, LodResult, Settings, WorkflowDescriptor } from './lib/bridge';
-import { DEFAULT_OPTIONS, preparePilot, toApiPrompt, validatePilot } from './lib/workflow';
+import { DEFAULT_OPTIONS } from './lib/workflow';
+import { assertInstalledNodes, prepareApiProduction, validateApiProduction } from './lib/api-workflow';
 import type { GenerateOptions } from './lib/workflow';
 import { STUDIO_MODULES } from './lib/modules';
 import type { ModuleKind } from './lib/modules';
@@ -15,7 +16,7 @@ import { ModelViewport } from './components/ModelViewport';
 import './styles/app.css';
 
 const initialSettings: Settings = {
-  comfyUrl: 'http://127.0.0.1:8188', blenderPath: '', station: '4070ti-super', libraryRoot: '',
+  comfyUrl: 'http://127.0.0.1:8188', blenderPath: '', station: 'local', libraryRoot: '',
 };
 const tabIcons = { generation: WandSparkles, inspection: Box, library: Archive,
   optimization: SlidersHorizontal, texture: Layers3, image: ImageIcon, export: PackageCheck };
@@ -36,7 +37,7 @@ function SettingDialog({ current, onSave, onClose }: { current: Settings; onSave
         <button type="button" className="icon-button" onClick={onClose} aria-label="Kapat"><X size={18} /></button></div>
       <p className="modal-desc">Ayarlar bu bilgisayarda tutulur. Mevcut ComfyUI, Blender ve model önbelleği değiştirilmez.</p>
       <label className="field"><span>ComfyUI API adresi</span><input value={draft.comfyUrl} onChange={(e) => setDraft({ ...draft, comfyUrl: e.target.value })} placeholder="http://127.0.0.1:8188" /></label>
-      <label className="field"><span>İstasyon kimliği</span><input value={draft.station} onChange={(e) => setDraft({ ...draft, station: e.target.value })} placeholder="4070ti-super" /></label>
+      <label className="field"><span>İstasyon kimliği</span><input value={draft.station} onChange={(e) => setDraft({ ...draft, station: e.target.value })} placeholder="4070ti-super veya 5080" /></label>
       <label className="field"><span>Blender executable</span><div className="field-with-button"><input value={draft.blenderPath} onChange={(e) => setDraft({ ...draft, blenderPath: e.target.value })} placeholder="Kurulum yolu otomatik aranır" /><button type="button" onClick={async () => {const p = await bridge.pickBlender(); if (typeof p === 'string') setDraft({ ...draft, blenderPath: p });}}>Seç</button></div></label>
       <label className="field"><span>Asset arşiv klasörü</span><div className="field-with-button"><input value={draft.libraryRoot} onChange={(e) => setDraft({ ...draft, libraryRoot: e.target.value })} placeholder="Varsayılan: uygulama veri klasörü" /><button type="button" onClick={async () => {const p = await bridge.pickArchive(); if (typeof p === 'string') setDraft({ ...draft, libraryRoot: p });}}>Seç</button></div></label>
       {error && <div className="error-message"><CircleAlert size={16} /> {error}</div>}
@@ -53,6 +54,8 @@ function App() {
   const [active, setActive] = useState<ModuleKind>('generation');
   const [environment, setEnvironment] = useState<Environment | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [viewExpanded, setViewExpanded] = useState(false);
+  const [debugInfo, setDebugInfo] = useState('');
   const [connection, setConnection] = useState<'checking' | 'online' | 'offline'>('checking');
   const [gpu, setGpu] = useState<GpuStats | null>(null);
   const [workflows, setWorkflows] = useState<WorkflowDescriptor[]>([]);
@@ -115,6 +118,10 @@ function App() {
   }, [job?.promptId, job?.status, refresh]);
 
   const connected = connection === 'online';
+  const stationIsMismatched = !!gpu && !!environment && (
+    (gpu.name.includes('5080') && environment.settings.station.includes('4070')) ||
+    (gpu.name.includes('4070') && environment.settings.station.includes('5080'))
+  );
   const currentWorkflow = workflows.find((w) => w.id === workflowId);
   const filteredAssets = assets.filter((asset) => asset.title.toLowerCase().includes(search.toLowerCase()) || asset.engine.toLowerCase().includes(search.toLowerCase()));
 
@@ -137,19 +144,38 @@ function App() {
     if (!connected) {setError('ComfyUI bağlantısı kapalı. Ayarlardaki adresi kontrol et.');return;}
     setBusy(true);
     try {
-      const graph = await bridge.workflow(workflowId);
-      validatePilot(graph);
+      const document = await bridge.workflow(workflowId);
+      if (document.format !== 'api') throw new Error('Bu sürüm ComfyUI API Export JSON gerektiriyor.');
+      const original = document.prompt;
+      const graphInfo = validateApiProduction(original);
       const nodeInfo = await bridge.nodeInfo();
+      assertInstalledNodes(original, nodeInfo);
       const uploadedName = await bridge.uploadImage(imagePath);
-      const prepared = preparePilot(graph, options, uploadedName);
-      const compiled = toApiPrompt(prepared, nodeInfo);
-      const result = await bridge.submit({ workflowId, imagePath, apiPrompt: compiled.prompt, uiWorkflow: prepared,
-        config: { ...options, uploadedName, includedNodes: compiled.reachable.length, station: environment?.settings.station } });
+      const mode = currentWorkflow?.family === 'TRELLIS.2' ? 'trellis2' : 'pixal3d';
+      const prompt = prepareApiProduction(original, options, uploadedName, mode);
+      const result = await bridge.submit({ workflowId, imagePath, apiPrompt: prompt, uiWorkflow: original,
+        config: { ...options, uploadedName, format: 'api', includedNodes: graphInfo.nodeCount,
+          gpu: gpu?.name ?? null, station: environment?.settings.station } });
       setJob(result);setNotice(`ComfyUI kuyruğa aldı: ${result.promptId.slice(0, 8)}…`);
     } catch (e) {setError(`Üretim başlatılamadı: ${String(e)}`);}
     finally {setBusy(false);}
   }
 
+  async function importWorkflow() {
+    setError(''); setNotice('');
+    try {
+      const file = await bridge.pickApiWorkflow(); if (typeof file !== 'string') return;
+      const imported = await bridge.importApiWorkflow(file);
+      setWorkflows(await bridge.workflows()); setWorkflowId(imported.id);
+      setNotice('API workflow eklendi: ' + imported.title + '. Orijinal dosya korunuyor.');
+      setActive('generation');
+    } catch (e) { setError('API workflow içe aktarılamadı: ' + String(e)); }
+  }
+  async function showJobDiagnostics() {
+    if (!job) return;
+    try { setDebugInfo(JSON.stringify(await bridge.jobDiagnostics(job.promptId), null, 2)); }
+    catch(e) { setError('Tanı kaydı alınamadı: ' + String(e)); }
+  }
   async function importGlb() {
     try {
       const file = await bridge.pickGlb(); if (typeof file !== 'string') return;
@@ -192,22 +218,26 @@ function App() {
         <div className="sidebar-section-title">LOCAL ENGINE</div>
         <div className="connection-card"><div className={`status-dot ${connection}`}/><div><strong>ComfyUI Desktop</strong><span>{connected ? 'API connected' : connection === 'checking' ? 'Checking connection' : 'Disconnected'}</span></div><button onClick={() => void checkConnection()} title="Bağlantıyı yenile" type="button"><RotateCcw size={15}/></button></div>
         <div className="station-info"><Monitor size={15}/><span>{environment?.settings.station || 'Local workstation'}</span></div>
+        {stationIsMismatched && environment && <button type="button" className="station-fix" onClick={() => void saveSettings({
+          ...environment.settings, station: gpu?.name.includes('5080') ? '5080' : '4070ti-super',
+        })}>GPU etiketi farklı · Düzelt</button>}
         <button className="settings-action" onClick={() => setSettingsOpen(true)}><Settings2 size={18}/> Settings <ChevronRight size={15}/></button>
       </div>
     </aside>
 
     <main className="workspace">
-      <header className="topbar"><div className="breadcrumb"><span>PRODUCTION HUB</span><ChevronRight size={15}/><strong>{STUDIO_MODULES.find((m) => m.id === active)?.label}</strong></div><div className="top-actions"><span className="private-pill"><CircleCheck size={13}/> LOCAL-FIRST</span><span className="version">v0.1.0 / M1</span><button className="top-icon" type="button" onClick={() => setSettingsOpen(true)} title="Ayarlar"><Settings2 size={19}/></button></div></header>
-      <div className="workspace-title"><div><span className="eyebrow">AI MODEL PRODUCTION SYSTEM</span><h1>{active === 'library' ? 'Asset Library' : active === 'optimization' ? 'Optimize Studio' : active === 'inspection' ? '3D Inspector' : 'Production Workspace'}</h1><p>ComfyUI → GLB → Blender → Asset Library · Kaynak dosyalar her zaman korunur.</p></div><button type="button" className="btn btn-outline" onClick={() => void importGlb()} disabled={busy}><Plus size={15}/> GLB İçe Aktar</button></div>
+      <header className="topbar"><div className="breadcrumb"><span>PRODUCTION HUB</span><ChevronRight size={15}/><strong>{STUDIO_MODULES.find((m) => m.id === active)?.label}</strong></div><div className="top-actions"><span className="private-pill"><CircleCheck size={13}/> LOCAL-FIRST</span><span className="version">v0.1.1 / M1.1</span><button className="top-icon" type="button" onClick={() => setSettingsOpen(true)} title="Ayarlar"><Settings2 size={19}/></button></div></header>
+      <div className="workspace-title"><div className="workspace-heading"><h1>{active === 'library' ? 'Asset Library' : active === 'optimization' ? 'Optimize Studio' : active === 'inspection' ? '3D Inspector' : '3D Production'}</h1><span className="workspace-crumb">ComfyUI <ChevronRight size={12}/> Blender <ChevronRight size={12}/> Asset Library</span></div><button type="button" className="btn btn-outline workspace-import" onClick={() => void importGlb()} disabled={busy}><Plus size={15}/> GLB İçe Aktar</button></div>
       {error && <div className="banner banner-error"><CircleAlert size={17}/><span>{error}</span><button onClick={() => setError('')} type="button"><X size={17}/></button></div>}
       {notice && <div className="banner banner-success"><CircleCheck size={17}/><span>{notice}</span><button onClick={() => setNotice('')} type="button"><X size={17}/></button></div>}
-      <div className="main-grid">
+      <div className={`main-grid ${viewExpanded ? 'inspector-expanded' : ''}`}>
         <section className="tools-column">
           {active === 'generation' ? <>
             <div className="panel-heading"><div><span className="panel-id">01</span><h2>Production Setup</h2></div><Sparkles size={17}/></div>
             <div className="panel-content">
               <label className="field"><span>WORKFLOW ENGINE</span><div className="select-wrap"><select value={workflowId} onChange={(e) => setWorkflowId(e.target.value)}>{workflows.length ? workflows.map(w => <option value={w.id} key={w.id}>{w.title}</option>) : <option value="pixal3d-fox">Pixal3D · Image → PBR Model</option>}</select><ChevronDown size={15}/></div></label>
-              <div className="help-text">{currentWorkflow?.description || 'Resmî ComfyUI grafı, local modeller, PBR bake.'}</div>
+              <div className="help-text">{currentWorkflow?.description || 'ComfyUI API grafı, yerel modeller, PBR bake.'}</div>
+              <button type="button" className="workflow-import" onClick={() => void importWorkflow()}><Upload size={14}/> ComfyUI API JSON İçe Aktar</button>
               <div className="field-label">REFERENCE IMAGE</div>
               <button type="button" className={`image-drop ${imagePath ? 'has-file' : ''}`} onClick={async () => { const f = await bridge.pickImage(); if (typeof f === 'string') setImagePath(f); }}>
                 <div className="image-drop-icon"><ImageIcon size={27}/></div>
@@ -242,10 +272,11 @@ function App() {
           </>}
         </section>
         <section className="center-column">
-          <ModelViewport base64={glb} title={previewLabel} busy={viewLoading} />
+          <ModelViewport base64={glb} title={previewLabel} busy={viewLoading} expanded={viewExpanded} onToggleExpanded={() => setViewExpanded(!viewExpanded)} />
           <div className="bottom-workspace">
             <div className="log-card"><div className="card-heading"><div><Activity size={17}/><strong>Activity Monitor</strong></div><span className={job && ['running','queued','pending_result'].includes(job.status) ? 'live-status' : 'subdued'}>{job?.status.toUpperCase() || 'STANDBY'}</span></div>
-              <p>{job ? job.message : 'Henüz bu oturumda bir üretim başlatılmadı. Mevcut GLB’leri arşivden inceleyebilirsin.'}</p>
+              <p>{job ? job.message : 'Hazır · Arşivden GLB seç veya Pixal3D üretimini başlat.'}</p>
+              {job && ['failed','no_output'].includes(job.status) && <button className="job-debug" type="button" onClick={() => void showJobDiagnostics()}>Tanı Kaydı Görüntüle</button>
               {job && <div className="job-bar"><div className={`job-bar-fill ${job.status === 'done' ? 'finished' : ''}`}/></div>}
               <div className="log-footer"><span><Command size={13}/> ComfyUI / Queue</span><span>{job?.promptId.slice(0, 8) || 'No active prompt'}</span></div>
             </div>
@@ -284,6 +315,7 @@ function App() {
       <footer className="bottom-bar"><div><span className="footer-light"/> LOCAL PRODUCTION · NO CLOUD INFERENCE</div><div>{environment?.settings.comfyUrl ?? 'http://127.0.0.1:8188'} <span>•</span> {assets.length} ASSETS</div></footer>
     </main>
     {settingsOpen && <SettingDialog current={environment?.settings ?? initialSettings} onSave={saveSettings} onClose={() => setSettingsOpen(false)} />}
+    {debugInfo && <div className="modal-backdrop" onMouseDown={(e) => {if(e.target===e.currentTarget) setDebugInfo('');}}><div className="modal debug-modal" role="dialog" aria-modal="true" aria-label="ComfyUI job diagnostics"><div className="modal-header"><h2>ComfyUI Tanı Kaydı</h2><button type="button" className="icon-button" onClick={()=>setDebugInfo('')}><X size={18}/></button></div><p className="modal-desc">Hata kaydını kopyalayıp paylaşabilirsin. Prompt ID, hata veren node ve çıktı düğümleri yer alır.</p><textarea className="debug-text" value={debugInfo} readOnly spellCheck={false}/><div className="modal-footer"><button className="btn btn-outline" type="button" onClick={() => void navigator.clipboard?.writeText(debugInfo).then(()=>setNotice('Tanı kaydı kopyalandı.')).catch(()=>setError('Metni elle kopyalayabilirsin.'))}>Kopyala</button><button className="btn btn-ghost" type="button" onClick={()=>setDebugInfo('')}>Kapat</button></div></div></div>
   </div>;
 }
 
