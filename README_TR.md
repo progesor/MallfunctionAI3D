@@ -1,22 +1,23 @@
-# Mallfunction — ComfyUI → Unity 3D Asset Pilot v0.1.2
+# Mallfunction — ComfyUI → Unity 3D Asset Pilot v0.1.3
 
 **Hazırlanma tarihi:** 2026-10-14  
-**Durum:** ComfyUI Desktop denetimleri okundu (iki rapor, 14 Ekim 2026): v0.40.0, Windows 11, RTX 4070 Ti SUPER 16 GB, 64 GB RAM, 7/7 model adı API'de mevcut. v0.1.1 node testi hatalı 0/29 gösterdi; v0.1.2 düzeltmesinin Windows ortamında yeniden çalıştırılması gerekiyor. **Gerçek AI/Blender/Unity üretimi henüz yapılmadı.**  
+**Durum:** 14 Ekim 2026 saat 15:54'te ComfyUI Desktop v0.40.0 (RTX 4070 Ti SUPER, 16 GB) için **43/43 çalıştırılabilir node + 7/7 model envanteri PASS**. Kullanıcı bu ComfyUI sisteminde daha önce başarılı 3D üretim yaptı; **bu repodaki özel Pixal3D/TRELLIS.2 pilot JSON'ları, Blender LOD ve Unity prefabı henüz çalıştırılmadı**. İkinci geliştirme istasyonu RTX 5080 16 GB; bu istasyon için güncel rapor yok.  
 **v0.1.1 düzeltmesi:** Windows PowerShell 5.1 ortamında audit scriptinin `param()` içinden `$PSScriptRoot` kullanması nedeniyle oluşan `Join-Path` hatası giderildi. ComfyUI Desktop kullanıcısı için `-DockerContainer` verilmesi gerekmez.
 **v0.1.2 düzeltmesi:** PowerShell 5.1 `/object_info` yanıtını kimi ortamlarda nesne yerine `Length` özelliği üzerinden okuduğu için 0/29 yanlış negatifi oluştu. Artık HTTP JSON açıkça parse ediliyor; gerekirse `/object_info/{node_class}` tekil sorgularına düşüyor. Doğrulanamayan düğümler `unknown` olarak işaretleniyor, `missing` sayılmıyor.
 
 **Güvenlik ilkesi:** Var olan çalışan Docker/WSL/ComfyUI kurulumu ve kurulu model ağırlıkları değiştirilmez; model ağırlıkları indirilmez; workflow'lar yalnızca bu ayrı klasöre hazırlanır. Batch üretim **etkin değildir**.
 
 
-### İki gerçek denetimin sonucu ve bir sonraki adım (14 Ekim 2026)
+### Üretim kararı — 14 Ekim 2026
 
-- 15:24 ve 15:27 tarihli denetimlerde Pixal3D/TRELLIS.2 için 7 modelin tümü görünür; **yükleme veya başarılı 3D üretim henüz kanıtlanmadı**.
-- Gerçek GPU RTX **4070 Ti SUPER**, önceki RTX 5080 varsayımını kullanma. NVIDIA raporları 4818 ve 5013 MiB anlık kullanım gösterdi (üretim benchmark'ı değildir).
-- Eski `all_available_node_types.txt` dosyasında yalnızca `Length` bulunduğu için 0/29 node sonucu **geçersizdir**. `git pull` ardından v0.1.2 `01_Inspect-ComfyUI.ps1` betiğini **bir kez** yeniden çalıştırıp yeni ZIP raporunu paylaş. Yeni rapor resmî grafın 43 çalıştırılabilir node türünü kontrol eder (UI not düğümleri hariç). `required_nodes.json` içinde `status=present/missing/unknown` alanı bulunur.
-- Gerçekten eksik node yoksa, orijinal PLAYBOX Fox Plush PNG'sini ComfyUI LoadImage'a yükleyip **yalnız Pixal3D** workflow'unu aç. VRAM logger çalışırken ilk üretimi başlat. Model ağırlığı indirme veya ComfyUI güncellemesi **gerekmiyor**.
-- Denetimin özet kaydı: `docs/AI3D_AUDIT_2026-10-14.md` (ham ve özel raporlar GitHub'a eklenmedi).
+- **Aktif istasyon:** RTX 4070 Ti SUPER 16 GB; ComfyUI Desktop 0.40.0; Windows 11; 64 GB RAM.
+- **İkinci istasyon:** RTX 5080 16 GB; bu istasyonun ComfyUI sürümü, model cache durumu ve node uyumluluğu ayrıca teyit edilecek. **İstasyon değişimi zorunlu değil.**
+- **Son denetim (15:54):** 43/43 çalıştırılabilir node ve 7/7 model ismi API ile doğrulandı. Bulk `/object_info` parsing, `Background` / `background` anahtar çakışmasından dolayı tekil node sorgularına düştü; 43/43 PASS. **Tekrar denetim gerekli değil.**
+- **Üretim durumu:** Kullanıcının ComfyUI'de geçmiş başarılı model üretimleri var. Ancak oyun için optimize edilmiş bu yeni Pixal3D pilotunun gerçek VRAM/GLB/PBR çıktısı henüz ölçülmedi.
+- **Bir sonraki iş:** `git pull` ile pilotu al, gerçek PLAYBOX tilki PNG'sini `LoadImage` üzerinden seç, `03_Monitor-Pilot.ps1 -Station 4070ti-super` ile ölçüm başlat, yalnız **Pixal3D** workflow'unu Queue'ya gönder.
+- **Ham raporlar GitHub'a eklenmiyor**; sonuç özeti `docs/AI3D_AUDIT_2026-10-14.md`, istasyon planı `docs/WORKSTATIONS.md`.
 
-## 1) Önce mevcut kurulumu incele
+## 1) Kurulum denetimi (aktif RTX 4070 istasyonunda tamamlandı)
 
 ZIP'i Windows'ta ComfyUI **dışında** bir klasöre aç (örnek: `C:\Works\MallfunctionAI3D`). Çalışan ComfyUI arayüzün açık olsun. Windows PowerShell'de:
 
@@ -32,7 +33,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\01_Inspect-ComfyUI.ps1 -Co
 
 Port farklıysa `-ComfyUrl` değiştir. Betik ComfyUI API'sinden `/system_stats`, `/object_info`, `/models/*` verilerini okur, ayrıca `nvidia-smi`, Docker ve WSL envanterini alır. Bir komut mevcut değilse bunu raporlar ve diğer kontrollere devam eder. Modelleri veya node'ları değiştirmez. `reports/Comfy_Audit_<tarih>.zip` dosyasını geri paylaş. Ham rapor yerel dosya yollarını ve kurulu model isimlerini içerebilir; herkese açık yerlere yükleme.
 
-**İlk karar kapısı:** resmî grafın 43 çalıştırılabilir node türünün ve 7 ortak model ağırlığının durumu raporda netleşsin. Eksik olanları topluca indirme/güncelleme yapmadan birlikte değerlendireceğiz. Eğer API `localhost` üzerinden erişilemiyorsa önce Docker yayınlanan portunu belirleyeceğiz.
+**Karar kapısı geçti:** 43/43 node ve 7/7 model mevcut. Bu komutu aynı istasyonda yeniden çalıştırmak zorunda değilsin. RTX 5080 istasyonuna geçildiğinde ayrı audit yapılır.
 
 ## 2) Resmî workflow ve iki pilot kopyası GitHub'da hazır
 
@@ -68,15 +69,15 @@ Alternatif sürüm için `--allow-other-source` yalnızca topolojik asgari kontr
 3. Tercihen işlemi kuyruğa göndermeden önce Windows'ta GPU ölçümünü başlat:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\03_Monitor-Pilot.ps1 -ComfyUrl "http://127.0.0.1:8188" -MaxSeconds 1800
+powershell -NoProfile -ExecutionPolicy Bypass -File .\03_Monitor-Pilot.ps1 -ComfyUrl "http://127.0.0.1:8188" -MaxSeconds 1800 -Station "4070ti-super"
 ```
 
 4. Ölçüm başladıktan sonra **yalnızca bu workflow'u** ComfyUI'da Queue Prompt ile başlat. Ölçüm aracı ComfyUI kuyruğu etkinleştiğinde başlatılan işi gözlemler, kuyruk 8 saniye boşaldıktan sonra raporu kaydeder.
-5. İlk çıktıyı `ComfyUI/output/3d/Mallfunction/` altında ara. Çalışma grafı `Save3DAdvanced` ile GLB üretimini hedefler. Çıktı oluşturulmadıysa kaydı ve hata mesajını gönder; çalışan sistemi güncelleme.
+5. ComfyUI Desktop için ilk çıktıyı gerçek `C:\Users\proge\AppData\Local\Comfy-Desktop\ComfyUI-Shared\output\3d\Mallfunction\` klasöründe ara. Çalışma grafı `Save3DAdvanced` ile GLB üretimini hedefler. Çıktı oluşturulmadıysa kaydı ve hata mesajını gönder; çalışan sistemi güncelleme.
 
 **Parametreler:** Pixal/TRELLIS anahtarları `false`/`true`; yapı çözünürlüğü `32`; upsample `1024`; remesh `512`; decimate `8000` hedef yüz; unwrap/bake texture `1024`; normal map `1024`; AO `1024`, 32 örnek. Yüksek detaylı mesh normal/AO bake'in kaynak tarafında kalır. Bu optimizasyon *sadece ilk denemedir* ve OOM ihtimalini sıfırlamaz.
 
-**GPU raporları:** `reports/GPU_Pilot_<tarih>.csv` ve `.json`. Peak VRAM, GPU kullanım yüzdesi, host RAM ve kuyruk aktivitesi gerçek makineden alınır. VRAM diğer uygulamaları da içerir. Ölçüm kuyruk süresi yaklaşık değerdir; özel bir benchmark koşusu değildir.
+**GPU raporları:** `reports/GPU_Pilot_<tarih>.csv` ve `.json`; `station` alanı `4070ti-super` veya `5080` olarak istasyonları ayırır. Peak VRAM, GPU kullanım yüzdesi, host RAM ve kuyruk aktivitesi gerçek makineden alınır. VRAM diğer uygulamaları da içerir. Ölçüm kuyruk süresi yaklaşık değerdir; özel bir benchmark koşusu değildir.
 
 ## 4) GLB yapısı ve Blender/Unity hazırlığı
 
@@ -116,4 +117,4 @@ Pixal3D ilk başarılı GLB + GPU sonucu gelmeden TRELLIS.2 koşusuna veya batch
 
 ## Paket test durumu
 
-`python -m unittest discover -s tests -v`: 5 sentetik test geçti (workflow edit invariants, SHA, basic GLB parsing). Yerel GPU/Blender gerçek çalıştırma durumu: **bekliyor**. Testler ComfyUI sürüm uyumluluğunu kanıtlamaz.
+`python -m unittest discover -s tests -v`: 5 sentetik test geçti (workflow edit invariants, SHA, basic GLB parsing). Yerel GPU/Blender gerçek çalıştırma durumu: **bekliyor**. 43/43 node + 7/7 model API uyumluluğu ayrıca gerçek Windows ComfyUI Desktop ortamında doğrulandı; bunlar pilot üretim başarısı anlamına gelmez.
