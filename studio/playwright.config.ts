@@ -4,6 +4,8 @@ export default defineConfig({
   testDir: './e2e',
   timeout: 30_000,
   retries: process.env.CI ? 1 : 0,
+  // Shared Windows software WebGL fallback can stall concurrent headless contexts.
+  workers: process.env.CI ? 1 : undefined,
   reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
   use: {
     baseURL: 'http://127.0.0.1:1420',

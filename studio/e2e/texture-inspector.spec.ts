@@ -47,7 +47,7 @@ test('embedded PBR map cards show original/packed channels and enlarged preview'
     };
   },{base64:glb,savedAsset:asset});
   await page.goto('/');
-  await page.getByRole('button',{name:/Model Arşivi/}).click();
+  await page.getByRole('button',{name:/Asset Library/}).click();
   await page.getByRole('button',{name:/PLAYBOX Fox Plush/}).first().click();
   await expect(page.getByTestId('pbr-texture-inspector')).toBeVisible();
   await expect(page.getByRole('button',{name:/Roughness haritasını büyüt/})).toBeEnabled();
