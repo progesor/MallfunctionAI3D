@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 const WORKER: &str = include_str!("../../../blender/repair_uv_pbr.py");
 const FIDELITY_WORKER: &str = include_str!("../../../blender/uv_texture_fidelity.py");
+const UV_PLANNER_WORKER: &str = include_str!("../../../blender/uv_planner.py");
 const ROLES: [&str;5] = ["baseColor", "normal", "metallic", "roughness", "occlusion"];
 
 #[derive(Serialize)]
@@ -208,6 +209,14 @@ fn build_repaired_glb(
 /// become a precise worker error, never a bare Windows "os error 2".
 fn read_blender_result(version:&Path, exit_success:bool, exit_code:Option<i32>, log:&str) -> StudioResult<Value> {
     let report_path=version.join("Repair_Report.json");
+    if log.contains("UV_PREFLIGHT_REJECTED:") {
+        let stage=log.lines().rev().find(|x|x.contains("UV_PREFLIGHT_REJECTED:"))
+            .unwrap_or("UV_PREFLIGHT_REJECTED");
+        return Err(format!(
+            "UV atlası bake öncesinde reddedildi; hiçbir PBR haritası              yeniden bake edilmedi. {}. Plan: {}.              UV_Stress.svg ve UV_Plan_Working.blend aynı klasördedir.              Eski source GLB ve Unity prefabları korunuyor.",
+            stage.trim(),version.join("UV_Plan.json").display()
+        ));
+    }
     if !exit_success || !report_path.is_file() {
         let tail=log.lines().rev().take(32).collect::<Vec<_>>()
             .into_iter().rev().collect::<Vec<_>>().join("\n");
@@ -715,6 +724,10 @@ fn background_repair(
     fs::write(&quality_worker,FIDELITY_WORKER).map_err(|e|format!(
         "Blender Texture Fidelity worker yazılamadı: {}: {e}",
         quality_worker.display()))?;
+    let planner_worker=version.join("uv_planner.py");
+    fs::write(&planner_worker,UV_PLANNER_WORKER).map_err(|e|format!(
+        "UV plan ön kontrol modülü yazılamadı: {}: {e}",
+        planner_worker.display()))?;
     // Do not clean up failed version automatically: Blender log/checkpoints
     // are the diagnostic evidence. No original files are modified.
     let execution=Command::new(&blender).arg("-b")

@@ -10,7 +10,15 @@ import ast
 import math
 from pathlib import Path
 from types import SimpleNamespace
+import sys
 import unittest
+
+HERE = Path(__file__).resolve().parents[1] / "blender"
+if str(HERE) not in sys.path:
+    sys.path.insert(0,str(HERE))
+from uv_planner import (
+    evaluate_plan, select_bake_candidate, select_diagnostic_candidate,
+)
 
 WORKER = Path(__file__).resolve().parents[1] / "blender" / "repair_uv_pbr.py"
 
@@ -123,9 +131,15 @@ class FakeBlender:
 
     def uv_stretch(self, _mesh, name):
         if name == "UVMap":
-            return {"p95Anisotropy": 1.0}
-        return {"p95Anisotropy": {62: 7.0, 50: 3.0, 38: 1.8}.get(
-            self.current_seam_angle, 4.0)}
+            return {"p95Anisotropy": 1.2, "maximumAnisotropy": 5.0,
+                    "trianglesSampled": 12, "degenerateUvTriangles": 0}
+        return {
+            "p95Anisotropy": {62: 7., 50: 3., 38: 1.8}.get(
+                self.current_seam_angle, 4.0),
+            "maximumAnisotropy": {62: 14.,50: 6.,38: 2.5}.get(
+                self.current_seam_angle, 8.0),
+            "trianglesSampled": 12, "degenerateUvTriangles": 0,
+        }
 
     def uv_island_count(self, _mesh, name):
         return self.old_count if name == "UVMap" else self.new_count
@@ -141,6 +155,9 @@ class FakeBlender:
             "uv_island_count": self.uv_island_count,
             "mark_curvature_seams": self.curvature_seams,
             "mesh_uv_stretch": self.uv_stretch,
+            "evaluate_plan": evaluate_plan,
+            "select_bake_candidate": select_bake_candidate,
+            "select_diagnostic_candidate": select_diagnostic_candidate,
         }
         exec(compile(program, str(WORKER), "exec"), context)
         return context["new_uv"]
@@ -153,7 +170,8 @@ class UVModeSwitchRegression(unittest.TestCase):
         old, clean, report = fake.compile_new_uv()(target, 62, 24, 1024)
         self.assertEqual(old, "UVMap")
         self.assertEqual(clean, "AI3D_Clean")
-        self.assertEqual(report["strategy"], "curvature-seams-quality-ranked")
+        self.assertEqual(report["strategy"], "curvature-seams-preflight-accepted")
+        self.assertTrue(report["accepted"])
         self.assertEqual(report["seamAngleDeg"], 38)
         self.assertEqual(len(report["triedPlans"]), 5)
         self.assertEqual(report["selectionReason"],
@@ -161,13 +179,16 @@ class UVModeSwitchRegression(unittest.TestCase):
         self.assertEqual(report["newUVIslands"], 12)
         self.assertGreaterEqual(target.data.generation, 3)
 
-    def test_smart_fallback_reacquires_handle_after_mode_switch(self):
+    def test_bad_uv_atlas_is_diagnosed_without_smart_project_fallback(self):
         target = Target()
         fake = FakeBlender(target, old_count=50, new_count=80)
         old, clean, report = fake.compile_new_uv()(target, 62, 24, 1024)
         self.assertEqual((old, clean), ("UVMap", "AI3D_Clean"))
-        self.assertEqual(report["strategy"], "smart-project-fallback")
+        self.assertEqual(report["strategy"], "uv-preflight-rejected")
+        self.assertFalse(report["accepted"])
         self.assertEqual(report["newUVIslands"], 80)
+        self.assertEqual(len(report["triedPlans"]), 5)
+        self.assertFalse(any(x.get("passesPreflight") for x in report["triedPlans"]))
 
     def test_new_atlas_uses_new_name_without_overwriting_existing(self):
         target = Target()

@@ -40,6 +40,9 @@ from uv_texture_fidelity import (
     evaluate_uv_stretch, triangle_uv_stretch,
     REFERENCE_FACE_ID, surface_uv_pairs_reference,
 )
+from uv_planner import (
+    evaluate_plan, select_bake_candidate, select_diagnostic_candidate,
+)
 
 MAPS = ("baseColor", "normal", "metallic", "roughness", "occlusion")
 
@@ -248,7 +251,6 @@ def new_uv(target, angle, margin_px, resolution):
     new_layer = mesh.uv_layers.new(name="AI3D_Clean")
     clean_name = str(new_layer.name)
     attempted = []
-    best = None
     last_error = None
 
     def unwrap_threshold(threshold):
@@ -294,24 +296,18 @@ def new_uv(target, angle, margin_px, resolution):
             valid = (max(u for u, _ in uv_values) - min(u for u, _ in uv_values) > .2
                      and max(v for _, v in uv_values) - min(v for _, v in uv_values) > .2)
         metrics = mesh_uv_stretch(target.data, clean_name)
-        p95 = metrics.get("p95Anisotropy")
-        # Explore an additional limited island budget when a lower-stretch
-        # atlas needs one or two extra seams. Publication still requires
-        # actual island improvement and the geometric quality gate.
-        good = (valid and count > 0 and count <= math.ceil(old_count * 1.35)
-                and p95 is not None and math.isfinite(p95))
-        candidate = {
+        candidate = evaluate_plan(old_count, source_stretch, {
             "seamAngleDeg": threshold,
             "seamEdges": seams,
             "connectedComponents": components,
             "newUVIslands": count,
-            "p95Anisotropy": p95,
-            "valid": bool(good),
-        }
-        # Lower stretch is more important than reducing UV island count.
-        # Penalty is bounded and only breaks close stretch scores.
-        score = float(p95) * (1. + .22 * count / max(old_count, 1)) if good else float("inf")
-        return candidate, score
+            "p95Anisotropy": metrics.get("p95Anisotropy"),
+            "maximumAnisotropy": metrics.get("maximumAnisotropy"),
+            "degenerateUvTriangles": metrics.get("degenerateUvTriangles", 0),
+            "rebuiltStretch": metrics,
+            "validBounds": bool(valid),
+        })
+        return candidate
 
     angles = list(dict.fromkeys([
         angle, max(20, angle - 12), max(20, angle - 24),
@@ -319,73 +315,68 @@ def new_uv(target, angle, margin_px, resolution):
     ]))
     for threshold in angles:
         try:
-            candidate, score = unwrap_threshold(threshold)
+            candidate = unwrap_threshold(threshold)
         except Exception as exc:
             last_error = str(exc)
-            attempted.append({"seamAngleDeg": threshold, "valid": False,
-                              "reason": last_error})
+            attempted.append({
+                "seamAngleDeg": threshold, "valid": False,
+                "passesPreflight": False, "reasons": [last_error],
+                "score": None,
+            })
             continue
         attempted.append(candidate)
-        if score < (best["score"] if best else float("inf")):
-            best = {"score": score, "candidate": candidate}
-        if not candidate["valid"]:
-            last_error = "Atlas UV stretch or bounds check failed at {}°".format(threshold)
+        if not candidate["passesPreflight"]:
+            last_error = "UV preflight rejected {}°: {}".format(
+                threshold, "; ".join(candidate["reasons"]))
 
-    if best is not None:
-        winning = best["candidate"]
-        # Apply chosen plan *again* so the saved seam flags and UV coordinates
-        # match the quality-selected atlas (not the last trial plan).
-        winner, _ = unwrap_threshold(winning["seamAngleDeg"])
-        if not winner["valid"]:
-            raise RuntimeError("Winning UV plan was not reproducible")
+    # Never pick a candidate that is only 'best of bad' and then spend GPU
+    # minutes on five Cycles bakes. Previous Smart UV fallback fragmented
+    # the user's 262-island Fox into 1733 UV islands.
+    winning = select_bake_candidate(attempted)
+    if winning is not None:
+        # Reapply exactly once so source UVs, seam flags and report correspond
+        # to the atlas selected by the quality gate.
+        winner = unwrap_threshold(winning["seamAngleDeg"])
+        if not winner["passesPreflight"]:
+            raise RuntimeError("Accepted UV plan changed on reproduction")
         return old_name, clean_name, {
-            "strategy": "curvature-seams-quality-ranked",
+            "strategy": "curvature-seams-preflight-accepted",
+            "accepted": True,
             "seamAngleDeg": winner["seamAngleDeg"],
             "seamEdges": winner["seamEdges"],
             "connectedComponents": winner["connectedComponents"],
             "oldUVIslands": old_count,
             "newUVIslands": winner["newUVIslands"],
             "sourceStretch": source_stretch,
-            "rebuiltStretch": mesh_uv_stretch(target.data, clean_name),
+            "rebuiltStretch": winner["rebuiltStretch"],
+            "stretchGate": winner["stretchGate"],
             "triedPlans": attempted,
-            "selectionReason": "lowest-p95-stretch-before-island-count",
+            "selectionReason": "islands-reduced-and-source-relative-stretch-passed",
         }
 
-    # Fallback is explicitly reported and still goes through texture QC.
-    live = target.data.uv_layers.get(clean_name)
-    if live is None:
-        raise RuntimeError("Clean UV layer vanished before fallback")
-    target.data.uv_layers.active = live
-    live.active_render = True
-    bpy.ops.object.select_all(action="DESELECT")
-    target.select_set(True)
-    bpy.context.view_layer.objects.active = target
-    bpy.ops.object.mode_set(mode="EDIT")
-    try:
-        bpy.ops.mesh.select_all(action="SELECT")
-        result = bpy.ops.uv.smart_project(
-            angle_limit=math.radians(86),
-            island_margin=float(margin_px) / resolution,
-        )
-    finally:
-        bpy.ops.object.mode_set(mode="OBJECT")
-    if "FINISHED" not in result:
-        raise RuntimeError("UV Smart fallback failed")
-    live = target.data.uv_layers.get(clean_name)
-    if live is None:
-        raise RuntimeError("Clean UV layer vanished after fallback")
-    coords = [(float(loop.uv[0]),float(loop.uv[1])) for loop in live.data]
-    if not coords or max(u for u,v in coords)-min(u for u,v in coords)<.2 or \
-       max(v for u,v in coords)-min(v for u,v in coords)<.2:
-        raise RuntimeError("Fallback UV atlas is degenerate")
+    # No Smart UV fallback: it can easily make editing harder than original.
+    # Keep a DIAGNOSTIC atlas and report but don't start any texture bake.
+    diagnostic = select_diagnostic_candidate(attempted, old_count)
+    if diagnostic is not None:
+        try:
+            diagnostic = unwrap_threshold(diagnostic["seamAngleDeg"])
+        except Exception as exc:
+            last_error = str(exc)
+    best_count = (diagnostic.get("newUVIslands")
+                  if diagnostic is not None else old_count)
     return old_name, clean_name, {
-        "strategy": "smart-project-fallback",
-        "reason": last_error or "Quality-ranked unwrap had no valid plan",
+        "strategy": "uv-preflight-rejected",
+        "accepted": False,
         "oldUVIslands": old_count,
-        "newUVIslands": uv_island_count(target.data,clean_name),
+        "newUVIslands": best_count,
         "sourceStretch": source_stretch,
-        "rebuiltStretch": mesh_uv_stretch(target.data,clean_name),
+        "rebuiltStretch": mesh_uv_stretch(target.data, clean_name),
         "triedPlans": attempted,
+        "selectionReason": "no-plan-meets-island-and-distortion-constraints",
+        "reason": last_error or
+                  "No candidate both reduced islands and preserved UV stretch",
+        "diagnosticOnly": True,
+        "warning": "No Cycles bake; no Smart UV fallback; source unchanged",
     }
 
 
@@ -887,19 +878,57 @@ def main():
         stage("safe_mesh_cleanup")
         cleanup_report = remove_orphan_geometry_only(target)
     welded = 0
-    # Safe seam welding: keep a backup of the complete editable mesh datablock.
+    weld_diagnostics = {
+        "requested": bool(args.weld), "applied": False,
+        "weldedVertices": 0, "reason": "disabled",
+    }
+    # Keep a safe baseline and RECORD failures; previous releases silently
+    # ignored rejected welds, leaving thousands of disconnected mesh islands.
     if args.weld:
         backup = target.data.copy()
+        weld_diagnostics["reason"] = "attempted"
         try:
             welded, stable = attempt_safe_weld(target.data)
-        except Exception:
+        except Exception as exc:
             target.data = backup
             welded = 0
+            weld_diagnostics["reason"] = "rejected: " + str(exc)
         else:
             if stable:
                 bpy.data.meshes.remove(backup)
+                weld_diagnostics["applied"] = True
+                weld_diagnostics["weldedVertices"] = welded
+                weld_diagnostics["reason"] = "passed triangle/bounds checks"
     stage("auto_unwrap")
     old_uv, new_uv_name, uv_report = new_uv(target, args.angle, args.margin, args.resolution)
+    preflight = {
+        "schemaVersion": 1, "sourceUntouched": True,
+        "acceptedForBake": bool(uv_report["accepted"]),
+        "uv": uv_report,
+        "weld": weld_diagnostics,
+        "sourceTriangleCountInBlender": before_triangles,
+        "sourceMeshHealth": original_health,
+        "workingMeshHealth": mesh_health(target.data),
+        "safeCleanup": cleanup_report,
+    }
+    (output / "UV_Plan.json").write_text(
+        json.dumps(preflight, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8")
+    print("AI3D_UV_PREFLIGHT:{}:{}->{}".format(
+        "PASS" if uv_report["accepted"] else "REJECTED",
+        uv_report["oldUVIslands"], uv_report["newUVIslands"]), flush=True)
+    if not uv_report["accepted"]:
+        stage("uv_preflight_rejected")
+        emit_uv_layout(target.data, new_uv_name, output / "UV_Layout.svg")
+        emit_uv_stress_layout(target.data, new_uv_name,
+                              output / "UV_Stress.svg")
+        bpy.ops.wm.save_as_mainfile(filepath=str(output / "UV_Plan_Working.blend"))
+        raise RuntimeError(
+            "UV_PREFLIGHT_REJECTED: No candidate reduces UV islands AND "
+            "keeps source-relative UV stretch. Smart UV fallback disabled; "
+            "0/5 PBR maps baked. Analysis: {}. Weld status: {}. "
+            "Original GLB unchanged.".format(
+                output / "UV_Plan.json", weld_diagnostics["reason"]))
     # Critical: checking the old UV layer on the welded mesh against itself
     # would miss UV corruption introduced by remove_doubles. Match every
     # original face/corner to the current UV by stamped identity+position.
@@ -986,6 +1015,8 @@ def main():
             "trianglesAfter": triangles(target.data),
             "verticesAfter": len(target.data.vertices),
             "weldedWorkingVertices": welded,
+            "weldDiagnostics": weld_diagnostics,
+            "uvPreflight": preflight,
             "mapRoles": list(saved_maps.keys()),
             "resolution": args.resolution,
             "marginPixels": args.margin,

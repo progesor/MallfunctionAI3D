@@ -134,6 +134,8 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
     <div className="card-heading"><div><Wrench size={16}/><strong>Auto UV + Texture Repair</strong></div></div>
     <p className="block-description">Mesh korunarak UV atlası ve 5 PBR haritası hazırlanır.
       Renk/Metallic/Roughness/AO dokuları aynı 3D yüzey noktalarında karşılaştırılır.
+      Önce UV adası ve gerilme ön kontrolü yapılır; uygun plan yoksa
+      <strong> beş PBR haritası bake edilmeden</strong> UV_Plan.json raporu hazırlanır.
       Kalite eşiklerini geçmeyen sonuç otomatik arşive eklenmez; kaynak değişmez.</p>
     <label className="unity-export-select"><span>PBR KAYNAĞI</span><div><select
       aria-label="UV Repair PBR sürümü" value={selected} disabled={busy||loading}

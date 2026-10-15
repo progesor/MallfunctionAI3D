@@ -32,6 +32,17 @@ class UVRepairContractTest(unittest.TestCase):
         self.assertIn('stage("texture_fidelity")', source)
         self.assertIn('Texture_Quality.json', source)
         self.assertIn('UV_Stress.svg', source)
+        self.assertIn('from uv_planner import (', source)
+        self.assertIn('UV_PREFLIGHT_REJECTED', source)
+        self.assertIn('UV_Plan.json', source)
+        self.assertIn('acceptedForBake', source)
+        self.assertIn('UV_Plan_Working.blend', source)
+        # Never split a failed topology into 1733 islands and run Cycles.
+        candidate = source[source.index('def new_uv('):source.index('def emit_uv_stress_layout(')]
+        self.assertNotIn('bpy.ops.uv.smart_project(', candidate)
+        self.assertIn('select_bake_candidate(attempted)', candidate)
+        self.assertLess(source.index('if not uv_report["accepted"]:'),
+                        source.index('stage("bake_" + role)'))
         self.assertIn('"uvStretchGate": stretch_gate', source)
         self.assertIn('"schemaVersion": 2', source)
         self.assertIn('"p99AbsoluteError"', (
@@ -69,6 +80,8 @@ class UVRepairContractTest(unittest.TestCase):
         self.assertIn("fn resume_uv_repair(", rust)
         self.assertIn("audit_source_triangles(&original)", rust)
         self.assertIn("const FIDELITY_WORKER:", rust)
+        self.assertIn("const UV_PLANNER_WORKER:", rust)
+        self.assertIn("UV atlası bake öncesinde reddedildi", rust)
         self.assertIn("fn verify_texture_quality(", rust)
         self.assertIn('"qualityGate":"surface-fidelity-local-distortion-v2"', rust)
         self.assertIn('UV gerilmesi:', rust)
