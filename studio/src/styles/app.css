@@ -466,3 +466,9 @@ button { transition: background-color .14s ease, color .14s ease, border-color .
   border-radius:8px;overflow-wrap:anywhere;font-size:.78rem; }
 .uv-repair-result strong {display:flex;align-items:center;gap:6px; }
 .uv-repair-result small {line-height:1.5;opacity:.78; }
+
+.uv-repair-error {display:grid;gap:6px;min-width:0;}
+.uv-repair-error .unity-export-error {white-space:pre-wrap;overflow-wrap:anywhere;margin:0;}
+.uv-repair-error details {font-size:.75rem;max-width:100%;min-width:0;}
+.uv-repair-error summary {cursor:pointer;}
+.uv-repair-error pre {max-height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:.7rem;line-height:1.4;}

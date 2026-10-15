@@ -99,7 +99,14 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
     {asset.materialCount!==1&&<p className="mini-disclaimer">v1 yalnız tek materyalli statik ürünlerde çalışır.</p>}
     {!canRepair&&<p className="mini-disclaimer">LOD önizlemesinden SRC görünümüne dön.</p>}
     {busy&&<p role="status" className="texture-inspector-loading">İşlem 1–3 dakika veya daha uzun sürebilir. ComfyUI üretimi başlatılmaz.</p>}
-    {error&&<p role="alert" className="unity-export-error">{error}</p>}
+    {error&&<div className="uv-repair-error">
+      <p role="alert" className="unity-export-error">{error.split('\n')[0]}</p>
+      {error.includes('\n')&&<details><summary>Blender hata ayrıntıları</summary>
+        <pre>{error}</pre>
+      </details>}
+      <button type="button" className="btn btn-ghost btn-full"
+        onClick={()=>void copy(error)}><Clipboard size={14}/> Hata metnini kopyala</button>
+    </div>}
     {result&&<div className="uv-repair-result" role="status" data-testid="uv-repair-success">
       <strong><Check size={14}/> Yeni temiz sürüm arşive eklendi</strong>
       <span>UV adası: {result.oldIslands} → {result.newIslands} · {result.strategy==='smart-project-fallback'?'Yedek UV yöntemi':'Açı + topoloji ile unwrap'}</span>

@@ -106,3 +106,31 @@ Interactive island/seam overrides and manually edited .blend -> fresh
 versioned rebake; material-region masks for plush vs plastic details;
 before/after atlas and map comparison; optional downstream Unity export
 chaining only after PBR validation.
+
+## 2026-10-15 hotfix · Windows os error 2 and Blender failure visibility
+
+Problem reported on first actual Fox test: "UV/PBR onarımı: The system cannot find
+the file specified. (os error 2)". The previous Rust worker read
+Repair_Report.json immediately after Blender exited; Blender can exit 0 even
+when an embedded Python script failed, leaving no report. The underlying
+failure cannot be determined from that generic error alone.
+
+Fix:
+- Blender invoked using `--python-exit-code 23` and script catches Python
+  exceptions, prints stack traces and returns code 23 on error.
+- Worker logs stage markers: input validation, GLB import, working mesh
+  duplication, UV unwrap, each of the five bakes, Blender save, geometry
+  export, completion.
+- Backend verifies both process status AND presence of Repair_Report.json.
+  Missing artifacts now report exact path, Blender stage, exit code, traceback
+  tail and absolute Repair_Run.log path.
+- Missing PBR input texture and output files show their exact absolute names;
+  no bare os error 2 without file context.
+- Studio displays a compact error with expandable detail + copyable text.
+- Source GLB, existing PBR, LOD, Unity prefab unchanged. GitHub CI remains
+  manual-only and was not run by this hotfix.
+
+If it fails again, copy the error details and/or last 40 lines from the
+Repair_Run.log path shown in Studio. This will identify the exact Blender
+operator or PBR input that needs the next correction. No need to repeat any
+ComfyUI generation, LOD or Unity export.

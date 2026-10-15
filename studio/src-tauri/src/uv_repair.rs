@@ -40,11 +40,17 @@ struct PreparedRepair {
 fn read_baked_png(version:&Path, role:&str, resolution:u32) -> StudioResult<(RgbaImage,Vec<u8>)> {
     if !ROLES.contains(&role) {return Err("Bilinmeyen bake rolü".into());}
     let path=version.join("Textures").join(format!("{role}.png"));
-    let baked_dir=version.join("Textures").canonicalize().map_err(|e|e.to_string())?;
-    if path.canonicalize().map_err(|e|e.to_string())?.parent() != Some(baked_dir.as_path()) {
+    let baked_dir=version.join("Textures").canonicalize().map_err(|e|
+        format!("Blender texture çıkış klasörü bulunamadı: {}: {e}. Log: {}",
+            version.join("Textures").display(),version.join("Repair_Run.log").display()))?;
+    let canonical=path.canonicalize().map_err(|e|
+        format!("Blender {role} map üretmedi: {}: {e}. Log: {}",
+            path.display(),version.join("Repair_Run.log").display()))?;
+    if canonical.parent() != Some(baked_dir.as_path()) {
         return Err("Bake texture path traversal reddedildi".into());
     }
-    let raw=fs::read(&path).map_err(|e|e.to_string())?;
+    let raw=fs::read(&path).map_err(|e|
+        format!("Bake texture okunamadı: {}: {e}",path.display()))?;
     if raw.len()>30_000_000 {return Err("Bake PNG 30 MB sınırını aşıyor".into());}
     let img=image::load_from_memory_with_format(&raw,ImageFormat::Png)
         .map_err(|e|format!("{role} bake PNG bozuk: {e}"))?.to_rgba8();
@@ -177,12 +183,38 @@ fn build_repaired_glb(
     Ok(out)
 }
 
+/// Blender may return exit=0 when a Python script throws unless
+/// --python-exit-code is supplied. Missing Repair_Report.json must therefore
+/// become a precise worker error, never a bare Windows "os error 2".
+fn read_blender_result(version:&Path, exit_success:bool, exit_code:Option<i32>, log:&str) -> StudioResult<Value> {
+    let report_path=version.join("Repair_Report.json");
+    if !exit_success || !report_path.is_file() {
+        let tail=log.lines().rev().take(32).collect::<Vec<_>>()
+            .into_iter().rev().collect::<Vec<_>>().join("\n");
+        let stage=log.lines().rev().find(|line|line.contains("AI3D_UV_STAGE:"))
+            .unwrap_or("Blender aşaması belirlenemedi");
+        let reason=if !report_path.is_file() {
+            format!("Blender başarı raporunu üretmedi: {}",report_path.display())
+        } else {"Blender Python betiği başarısız oldu".to_string()};
+        return Err(format!(
+            "{reason} (Blender çıkış kodu: {exit_code:?}, son aşama: {stage}). \
+             Ayrıntılı log: {}\n{}",
+            version.join("Repair_Run.log").display(),tail,
+        ));
+    }
+    read_json(&report_path).map_err(|e|
+        format!("Blender raporu okunamadı: {}: {e}. Log: {}",
+            report_path.display(),version.join("Repair_Run.log").display()))
+}
+
 fn background_repair(
     asset_dir:PathBuf, file_path:PathBuf, source_sha:String, texture_version:String,
     blender:String, resolution:u32, angle:u32, preset:String, weld:bool,
 ) -> StudioResult<PreparedRepair> {
-    verify_sha256(&file_path,&source_sha)?;
-    let original=fs::read(&file_path).map_err(|e|e.to_string())?;
+    verify_sha256(&file_path,&source_sha).map_err(|e|
+        format!("Kaynak GLB doğrulanamadı: {}: {e}",file_path.display()))?;
+    let original=fs::read(&file_path).map_err(|e|
+        format!("Kaynak GLB okunamadı: {}: {e}",file_path.display()))?;
     let (base_factor,source_metal,source_rough,source_ao,source_normal,double_sided)=gltf_factors(&original)?;
     let (map_dir,manifest)=existing_texture_dir(
         &asset_dir, asset_dir.file_name().and_then(|x|x.to_str()).ok_or("Asset klasörü geçersiz")?,
@@ -190,21 +222,33 @@ fn background_repair(
     )?;
     // Validate all 5 user-selected, immutable Texture Export maps before Blender.
     for role in ROLES {
-        png_map(&map_dir,&manifest,&format!("m0_{role}.png"))?;
+        let filename=format!("m0_{role}.png");
+        png_map(&map_dir,&manifest,&filename).map_err(|e|format!(
+            "UV onarımı başlamadan PBR kaynak haritası doğrulanamadı: {}: {e}. \
+             Seçilen Texture Export sürümünü kontrol et veya yeniden oluştur.",
+            map_dir.join(&filename).display()))?;
     }
     let version=asset_dir.join("uv_repairs").join(Uuid::new_v4().to_string());
-    fs::create_dir_all(&version).map_err(|e|e.to_string())?;
+    fs::create_dir_all(&version).map_err(|e|
+        format!("Yeni UV onarım klasörü açılamadı: {}: {e}",version.display()))?;
     let inputs=version.join("SourceMaps");
-    fs::create_dir(&inputs).map_err(|e|e.to_string())?;
+    fs::create_dir(&inputs).map_err(|e|
+        format!("SourceMaps klasörü açılamadı: {}: {e}",inputs.display()))?;
     for role in ROLES {
-        fs::copy(map_dir.join(format!("m0_{role}.png")),inputs.join(format!("m0_{role}.png")))
-            .map_err(|e|e.to_string())?;
+        let source=map_dir.join(format!("m0_{role}.png"));
+        let destination=inputs.join(format!("m0_{role}.png"));
+        fs::copy(&source,&destination).map_err(|e|
+            format!("PBR kaynak harita kopyalanamadı: {} → {}: {e}",
+                source.display(),destination.display()))?;
     }
     let worker=version.join("repair_uv_pbr.py");
-    fs::write(&worker,WORKER).map_err(|e|e.to_string())?;
+    fs::write(&worker,WORKER).map_err(|e|
+        format!("Blender UV worker yazılamadı: {}: {e}",worker.display()))?;
     // Do not clean up failed version automatically: Blender log/checkpoints
     // are the diagnostic evidence. No original files are modified.
-    let execution=Command::new(blender).arg("-b").arg("--python").arg(&worker)
+    let execution=Command::new(&blender).arg("-b")
+        .arg("--python-exit-code").arg("23")
+        .arg("--python").arg(&worker)
         .arg("--").arg("--input").arg(&file_path)
         .arg("--source-maps").arg(&inputs)
         .arg("--output").arg(&version)
@@ -213,15 +257,14 @@ fn background_repair(
         .arg("--margin").arg("24")
         .arg("--weld").arg(if weld {"1"} else {"0"})
         .arg("--preset").arg(&preset)
-        .output().map_err(|e|format!("Blender UV/PBR başlatılamadı: {e}"))?;
+        .output().map_err(|e|format!(
+            "Blender UV/PBR başlatılamadı. Executable: {}. Script: {}. OS: {e}",
+            blender,worker.display()))?;
     let log=format!("{}\n{}",String::from_utf8_lossy(&execution.stdout),String::from_utf8_lossy(&execution.stderr));
-    fs::write(version.join("Repair_Run.log"),&log).map_err(|e|e.to_string())?;
-    if !execution.status.success(){
-        return Err(format!("Blender UV bake başarısız. Log: {}. {}",
-            version.join("Repair_Run.log").display(),
-            log.chars().rev().take(550).collect::<String>().chars().rev().collect::<String>()));
-    }
-    let report=read_json(&version.join("Repair_Report.json"))?;
+    let log_path=version.join("Repair_Run.log");
+    fs::write(&log_path,&log).map_err(|e|
+        format!("Blender logu yazılamadı: {}: {e}",log_path.display()))?;
+    let report=read_blender_result(&version,execution.status.success(),execution.status.code(),&log)?;
     let source_triangles=inspect_glb(&original)?.0;
     if report.get("sourceUntouched").and_then(Value::as_bool)!=Some(true) ||
         report.get("trianglesBefore").and_then(Value::as_u64)!=Some(source_triangles) ||
@@ -243,8 +286,13 @@ fn background_repair(
     let (orm,metal_factor,rough_factor)=make_orm(
         &metal,&rough,&ao,source_metal,source_rough,&preset)?;
     let orm_bytes=png_bytes(&orm)?;
-    fs::write(version.join("Textures/ORM.png"),&orm_bytes).map_err(|e|e.to_string())?;
-     let geometry=fs::read(version.join("geometry.glb")).map_err(|e|e.to_string())?;
+    let orm_path=version.join("Textures/ORM.png");
+    fs::write(&orm_path,&orm_bytes).map_err(|e|
+        format!("Yeni ORM haritası yazılamadı: {}: {e}",orm_path.display()))?;
+    let geometry_path=version.join("geometry.glb");
+    let geometry=fs::read(&geometry_path).map_err(|e|format!(
+        "Blender geometry.glb okunamadı: {}: {e}. Log: {}",
+        geometry_path.display(),log_path.display()))?;
     let output=build_repaired_glb(
         &geometry,&base,&orm_bytes,&normal,
         base_factor,metal_factor,rough_factor,source_ao,source_normal,double_sided,
@@ -314,6 +362,23 @@ pub async fn repair_asset_uv(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]fn missing_blender_report_explains_actual_failure_instead_of_os_error_2() {
+        let dir=std::env::temp_dir().join(format!("uv_report_missing_{}",Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let error=read_blender_result(&dir,true,Some(0),
+            "AI3D_UV_STAGE:source_import\nTraceback (most recent call last):\nRuntimeError: unsupported Blender command")
+            .unwrap_err();
+        assert!(error.contains("Repair_Report.json"));
+        assert!(error.contains("Repair_Run.log"));
+        assert!(error.contains("source_import"));
+        assert!(error.contains("RuntimeError: unsupported Blender command"));
+        let error=read_blender_result(&dir,false,Some(23),"AI3D_UV_STAGE:bake_normal\nError").unwrap_err();
+        assert!(error.contains("bake_normal"));
+        fs::write(dir.join("Repair_Report.json"),b"{\"success\":true}").unwrap();
+        assert!(read_blender_result(&dir,true,Some(0),"done").is_ok());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]fn orm_preserves_gltf_semantics_and_plush_cleanup() {
         let metal=RgbaImage::from_pixel(1,1,Rgba([150,150,150,255]));
         let rough=RgbaImage::from_pixel(1,1,Rgba([35,35,35,255]));

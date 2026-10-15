@@ -46,5 +46,19 @@ class UVRepairContractTest(unittest.TestCase):
         self.assertIn("if new_islands==0 || new_islands>old_islands", rust)
 
 
+class MissingReportDiagnosticsRegression(unittest.TestCase):
+    def test_blender_python_exception_exit_code_and_stage_reporting(self):
+        repo = ROOT
+        worker = (repo / "blender" / "repair_uv_pbr.py").read_text(encoding="utf-8")
+        backend = (repo / "studio" / "src-tauri" / "src" / "uv_repair.rs").read_text(encoding="utf-8")
+        self.assertIn('.arg("--python-exit-code").arg("23")', backend)
+        self.assertIn('fn read_blender_result(', backend)
+        self.assertIn('Blender başarı raporunu üretmedi', backend)
+        self.assertIn('Repair_Run.log', backend)
+        self.assertIn('PBR kaynak haritası doğrulanamadı', backend)
+        self.assertIn('def stage(label):', worker)
+        self.assertIn('traceback.print_exc()', worker)
+        self.assertIn('sys.exit(23)', worker)
+
 if __name__ == "__main__":
     unittest.main()

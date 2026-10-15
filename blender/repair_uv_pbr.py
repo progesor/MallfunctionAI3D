@@ -18,6 +18,7 @@ import heapq
 import json
 import math
 import sys
+import traceback
 from pathlib import Path
 
 import bpy
@@ -25,6 +26,10 @@ import bmesh
 from mathutils import Vector
 
 MAPS = ("baseColor", "normal", "metallic", "roughness", "occlusion")
+
+
+def stage(label):
+    print("AI3D_UV_STAGE:" + label, flush=True)
 
 
 def parse_args():
@@ -412,6 +417,7 @@ def main():
     args = parse_args()
     if not 35 <= args.angle <= 88 or not 4 <= args.margin <= 48:
         raise ValueError("Angle 35..88 and margin 4..48 px required")
+    stage("validate_inputs")
     source_path = args.input.resolve(strict=True)
     input_dir = args.source_maps.resolve(strict=True)
     output = args.output.resolve()
@@ -431,6 +437,7 @@ def main():
 
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
+    stage("source_import")
     bpy.ops.import_scene.gltf(filepath=str(source_path))
     meshes = [ob for ob in bpy.context.scene.objects if ob.type == "MESH"]
     if not meshes:
@@ -446,6 +453,7 @@ def main():
     for ob in meshes:
         ob.select_set(True)
     bpy.context.view_layer.objects.active = meshes[0]
+    stage("working_mesh_duplicate")
     bpy.ops.object.duplicate()
     work_meshes = [o for o in bpy.context.selected_objects if o.type == "MESH"]
     # Originals remain as hidden, unmodified references in the Blender checkpoint.
@@ -473,6 +481,7 @@ def main():
         else:
             if stable:
                 bpy.data.meshes.remove(backup)
+    stage("auto_unwrap")
     old_uv, new_uv_name, uv_report = new_uv(target, args.angle, args.margin, args.resolution)
     scene = bpy.context.scene
     previous_engine = scene.render.engine
@@ -487,6 +496,7 @@ def main():
         target.select_set(True)
         bpy.context.view_layer.objects.active = target
         for role in MAPS:
+            stage("bake_" + role)
             png = input_dir / f"m0_{role}.png"
             src_img = bpy.data.images.load(str(png), check_existing=False)
             src_img.colorspace_settings.name = "sRGB" if role == "baseColor" else "Non-Color"
@@ -504,6 +514,7 @@ def main():
         target.data.uv_layers[new_uv_name].active_render = True
         # Remove the old UV layer from the export mesh only: glTF UV0 must be
         # our repaired atlas, while source UV stays in the saved .blend.
+        stage("save_editable_blend")
         preview_material(target, baked_images, new_uv_name, args.preset)
         bpy.ops.wm.save_as_mainfile(filepath=str(output / "Repair_Working.blend"))
         export_copy = target.data.copy()
@@ -514,6 +525,7 @@ def main():
         bpy.ops.object.select_all(action="DESELECT")
         target.select_set(True)
         bpy.context.view_layer.objects.active = target
+        stage("export_uv_geometry")
         bpy.ops.export_scene.gltf(filepath=str(output / "geometry.glb"), export_format="GLB",
                                   use_selection=True, export_materials="NONE",
                                   export_apply=False, export_normals=True, export_texcoords=True)
@@ -541,6 +553,7 @@ def main():
         }
         (output / "Repair_Report.json").write_text(
             json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        stage("complete")
         print("AI3D_REPAIR_SUCCESS:" + str(output), flush=True)
     finally:
         scene.render.engine = previous_engine
@@ -549,4 +562,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        traceback.print_exc()
+        print(f"AI3D_REPAIR_FAILED:{type(exc).__name__}: {exc}", flush=True)
+        # Blender's --python-exit-code also catches unhandled failures;
+        # sys.exit here covers launcher configurations without that flag.
+        sys.exit(23)
