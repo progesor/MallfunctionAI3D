@@ -16,6 +16,7 @@ use tauri::State;
 use uuid::Uuid;
 
 const WORKER: &str = include_str!("../../../blender/repair_uv_pbr.py");
+const FIDELITY_WORKER: &str = include_str!("../../../blender/uv_texture_fidelity.py");
 const ROLES: [&str;5] = ["baseColor", "normal", "metallic", "roughness", "occlusion"];
 
 #[derive(Serialize)]
@@ -30,6 +31,8 @@ pub struct UvRepairResult {
     pub old_islands: u64,
     pub new_islands: u64,
     pub source_untouched: bool,
+    pub quality: Value,
+    pub mesh_health: Value,
 }
 
 #[derive(Serialize, Clone)]
@@ -281,6 +284,87 @@ fn verify_repair_report(
 }
 
 
+/// Fail closed if a good UV island count hides poor physical texture transfer.
+/// The Blender-independent fidelity module compares source and baked textures
+/// at matching surface barycentric sample positions, not atlas background.
+fn verify_texture_quality(report:&Value,folder:&Path) -> StudioResult<Value> {
+    let path=folder.join("Texture_Quality.json");
+    if !path.is_file() {
+        return Err(format!(
+            "Bu UV sürümünün yüzey texture kalite raporu yok (eski, görseli \
+             doğrulanmamış bake). Kaynak dosyalar korunuyor. Yeni kalite \
+             kontrolü için taze UV onarım çalıştır. Eksik: {}",
+            path.display()
+        ));
+    }
+    let saved=read_json(&path)?;
+    if report.get("textureFidelity")!=Some(&saved) {
+        return Err(format!(
+            "Blender raporu ile bağımsız Texture_Quality.json uyuşmuyor: {}",
+            path.display()
+        ));
+    }
+    if saved.get("schemaVersion").and_then(Value::as_u64)!=Some(1) ||
+       saved.get("evaluated").and_then(Value::as_bool)!=Some(true) ||
+       saved.get("method").and_then(Value::as_str)!=Some(
+           "same-3d-surface-barycentric-UV-reprojection") {
+        return Err(format!("Texture quality contract geçersiz: {}",path.display()));
+    }
+    let provenance=saved.get("sourceUvProvenance")
+        .ok_or("Texture QA kaynak yüz/UV eşleştirme kanıtı eksik")?;
+    let faces=provenance.get("matchedTriangleCount").and_then(Value::as_u64)
+        .ok_or("Texture QA eşleşen kaynak üçgen sayısı eksik")?;
+    if faces==0 ||
+       Some(faces)!=report.get("trianglesBefore").and_then(Value::as_u64) ||
+       provenance.get("originalUvProvenanceIntact").and_then(Value::as_bool)!=Some(true) ||
+       provenance.get("originalCornerUvDriftCount").and_then(Value::as_u64)!=Some(0) {
+        return Err(format!(
+            "Blender vertex weld kaynak UV yerleşimini değiştirmiş veya              yüz eşleştirme eksik: {}. Mesh weld'i kapatıp yeniden dene;              kaynak GLB değişmedi.",path.display()));
+    }
+    let specs:[(&str,f64,f64);4]=[
+        ("baseColor",0.065,0.180),("metallic",0.075,0.210),
+        ("roughness",0.075,0.210),("occlusion",0.080,0.220)
+    ];
+    let mut failures=Vec::new();
+    for (role, max_mean, max_p95) in specs {
+        let field=format!("/maps/{role}");
+        let item=saved.pointer(&field).ok_or_else(||format!(
+            "Texture QA haritası eksik: {role} {}",path.display()))?;
+        let mean=item.get("meanAbsoluteError").and_then(Value::as_f64)
+            .ok_or_else(||format!("Texture QA {role} mean yok"))?;
+        let p95=item.get("p95AbsoluteError").and_then(Value::as_f64)
+            .ok_or_else(||format!("Texture QA {role} P95 yok"))?;
+        let count=item.get("sampleCount").and_then(Value::as_u64)
+            .ok_or_else(||format!("Texture QA {role} sampleCount yok"))?;
+        if count<4 || !mean.is_finite() || !p95.is_finite() ||
+           mean<0.0 || p95<0.0 {
+            return Err(format!("Texture QA {role} örnek/hata değerleri geçersiz"));
+        }
+        let measured_pass=mean<=max_mean && p95<=max_p95;
+        if item.get("passed").and_then(Value::as_bool)!=Some(measured_pass){
+            return Err(format!("Texture QA {role} başarı durumu hesapla uyuşmuyor"));
+        }
+        if !measured_pass {
+            failures.push(format!("{role}: mean={mean:.4}/{max_mean:.3}; \
+                                   p95={p95:.4}/{max_p95:.3}"));
+        }
+    }
+    let combined=failures.is_empty();
+    if saved.get("passed").and_then(Value::as_bool)!=Some(combined){
+        return Err(format!("Texture QA toplam sonucu harita sonuçlarıyla uyuşmuyor: {}",
+            path.display()));
+    }
+    if !combined {
+        return Err(format!(
+            "UV daha düzenli olsa da PBR texture transferi kaliteyi bozdu: {}. \
+             Onarım otomatik kabul edilmedi, orijinal varlık değişmedi. \
+             Beş bake dosyası, SVG ve Blender .blend korunuyor. Kalite raporu: {}",
+            failures.join(" | "),path.display()
+        ));
+    }
+    Ok(saved)
+}
+
 /// Finalize Blender's completed outputs, preserving the original five bakes.
 /// This is also called when resuming a previously rejected completed attempt.
 fn finalize_repair(
@@ -354,6 +438,9 @@ fn finalize_repair(
             folder.join("Repair_Report.json").display()
         ));
     }
+    // Evaluate texture quality FIRST so a bad tail/color never hides behind
+    // the separately documented one-face import-time geometry mismatch.
+    let quality=verify_texture_quality(&report,&folder)?;
     let audit=audit_source_triangles(&original)?;
     let declared=inspect_glb(&original)?.0;
     if audit.declared!=declared{
@@ -432,6 +519,8 @@ fn finalize_repair(
         "sourceDuplicateFaces":audit.duplicate_faces,
         "blenderAcceptedTriangles":accepted_triangles,
         "sourceImportTriangleDelta":audit.declared-accepted_triangles,
+        "surfaceTextureQuality":quality,
+        "qualityGate":"surface-fidelity-v1",
         "geometryAcceptancePolicy":geometry_policy,
         "explicitOneFaceImportLossApproval":geometry_policy=="explicit-user-approved-one-import-face-loss",
         "uv":{"oldIslands":old_islands,"newIslands":new_islands},
@@ -451,7 +540,8 @@ fn finalize_repair(
 
 fn background_repair(
     asset_dir:PathBuf, file_path:PathBuf, source_sha:String, texture_version:String,
-    blender:String, resolution:u32, angle:u32, preset:String, weld:bool,
+    blender:String, resolution:u32, angle:u32, preset:String,
+    weld:bool, safe_cleanup:bool,
 ) -> StudioResult<PreparedRepair> {
     verify_sha256(&file_path,&source_sha).map_err(|e|
         format!("Kaynak GLB doğrulanamadı: {}: {e}",file_path.display()))?;
@@ -486,6 +576,12 @@ fn background_repair(
     let worker=version.join("repair_uv_pbr.py");
     fs::write(&worker,WORKER).map_err(|e|
         format!("Blender UV worker yazılamadı: {}: {e}",worker.display()))?;
+    // Bundle the exact tested offline quality module alongside the pinned
+    // worker. No external pip package or Blender addon installation required.
+    let quality_worker=version.join("uv_texture_fidelity.py");
+    fs::write(&quality_worker,FIDELITY_WORKER).map_err(|e|format!(
+        "Blender Texture Fidelity worker yazılamadı: {}: {e}",
+        quality_worker.display()))?;
     // Do not clean up failed version automatically: Blender log/checkpoints
     // are the diagnostic evidence. No original files are modified.
     let execution=Command::new(&blender).arg("-b")
@@ -498,6 +594,7 @@ fn background_repair(
         .arg("--angle").arg(angle.to_string())
         .arg("--margin").arg("24")
         .arg("--weld").arg(if weld {"1"} else {"0"})
+        .arg("--safe-cleanup").arg(if safe_cleanup {"1"} else {"0"})
         .arg("--preset").arg(&preset)
         .output().map_err(|e|format!(
             "Blender UV/PBR başlatılamadı. Executable: {}. Script: {}. OS: {e}",
@@ -540,6 +637,8 @@ fn register_repair(
         old_islands:uv.get("oldUVIslands").and_then(Value::as_u64).unwrap_or(0),
         new_islands:uv.get("newUVIslands").and_then(Value::as_u64).unwrap_or(0),
         source_untouched:true,
+        quality:report.get("textureFidelity").cloned().unwrap_or(Value::Null),
+        mesh_health:report.get("meshHealth").cloned().unwrap_or(Value::Null),
     })
 }
 
@@ -563,6 +662,7 @@ pub fn list_uv_repair_attempts(
             .is_some_and(|s|Uuid::parse_str(s).is_ok()) {continue;}
         if version.join("Repair_Manifest.json").exists() ||
             !version.join("Repair_Run.log").is_file() ||
+            !version.join("Texture_Quality.json").is_file() ||
             !version.join("geometry.glb").is_file() ||
             !version.join("Repair_Working.blend").is_file() ||
             !version.join("UV_Layout.svg").is_file() ||
@@ -572,6 +672,13 @@ pub fn list_uv_repair_attempts(
         let report=match read_json(&version.join("Repair_Report.json")) {
             Ok(v)=>v,Err(_)=>continue,
         };
+        let quality=match read_json(&version.join("Texture_Quality.json")) {
+            Ok(v)=>v,Err(_)=>continue,
+        };
+        if quality.get("passed").and_then(Value::as_bool)!=Some(true) ||
+           report.get("textureFidelity")!=Some(&quality) {
+            continue; // Failed/legacy bakes are not listed as recoverable.
+        }
         if report.get("schemaVersion").and_then(Value::as_u64)!=Some(1) ||
             report.get("sourceUntouched").and_then(Value::as_bool)!=Some(true){
             continue;
@@ -641,7 +748,8 @@ pub async fn resume_uv_repair(
 #[tauri::command]
 pub async fn repair_asset_uv(
     asset_id:String, texture_export_dir:String, preset:String,
-    resolution:u32, seam_angle:u32, weld:bool, state:State<'_,StudioState>
+    resolution:u32, seam_angle:u32, weld:bool, safe_cleanup:bool,
+    state:State<'_,StudioState>
 ) -> StudioResult<UvRepairResult> {
     if !matches!(preset.as_str(),"preserve"|"plush") {
         return Err("Yalnız preserve/plush onarım profili desteklenir".into());
@@ -658,7 +766,8 @@ pub async fn repair_asset_uv(
     let sha=asset.sha256.clone();
     let original_path=PathBuf::from(&asset.file_path);
     let prepared=tauri::async_runtime::spawn_blocking(move ||
-        background_repair(dir,original_path,sha,texture_export_dir,exe,resolution,seam_angle,preset.clone(),weld)
+        background_repair(dir,original_path,sha,texture_export_dir,exe,resolution,seam_angle,
+                          preset.clone(),weld,safe_cleanup)
     ).await.map_err(|e|format!("UV Repair worker hatası: {e}"))??;
     register_repair(&state,&asset,prepared)
 }
@@ -683,6 +792,43 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    #[test]fn rejects_unscored_or_low_fidelity_uv_repairs() {
+        let root=std::env::temp_dir().join(format!("uv_qa_{}",Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let legacy=json!({"textureFidelity":null});
+        assert!(verify_texture_quality(&legacy,&root).unwrap_err()
+            .contains("kalite raporu yok"));
+        let quality=json!({
+            "schemaVersion":1,"evaluated":true,
+            "method":"same-3d-surface-barycentric-UV-reprojection",
+            "passed":false,
+            "sourceUvProvenance":{"matchedTriangleCount":80,
+                "originalCornerUvDriftCount":0,
+                "originalUvProvenanceIntact":true},
+            "maps":{
+                "baseColor":{"meanAbsoluteError":0.210,"p95AbsoluteError":0.45,"sampleCount":80,"passed":false},
+                "metallic":{"meanAbsoluteError":0.01,"p95AbsoluteError":0.02,"sampleCount":80,"passed":true},
+                "roughness":{"meanAbsoluteError":0.01,"p95AbsoluteError":0.02,"sampleCount":80,"passed":true},
+                "occlusion":{"meanAbsoluteError":0.01,"p95AbsoluteError":0.02,"sampleCount":80,"passed":true},
+            }
+        });
+        fs::write(root.join("Texture_Quality.json"),
+            serde_json::to_vec_pretty(&quality).unwrap()).unwrap();
+        let report=json!({"textureFidelity":quality,
+            "trianglesBefore":80});
+        assert!(verify_texture_quality(&report,&root).unwrap_err()
+            .contains("baseColor"));
+        let mut valid=quality.clone();
+        valid["maps"]["baseColor"]["meanAbsoluteError"]=json!(0.025);
+        valid["maps"]["baseColor"]["p95AbsoluteError"]=json!(0.070);
+        valid["maps"]["baseColor"]["passed"]=json!(true);
+        valid["passed"]=json!(true);
+        fs::write(root.join("Texture_Quality.json"),
+            serde_json::to_vec_pretty(&valid).unwrap()).unwrap();
+        assert_eq!(verify_texture_quality(
+            &json!({"textureFidelity":valid,"trianglesBefore":80}),&root).unwrap()["passed"],json!(true));
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]fn triangle_acceptance_distinguishes_pre_import_from_in_repair_loss() {
         let path=Path::new("example/uv_repairs/uuid");
         let fox=json!({"sourceUntouched":true,"trianglesBefore":7993,

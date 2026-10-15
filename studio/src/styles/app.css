@@ -479,3 +479,11 @@ button { transition: background-color .14s ease, color .14s ease, border-color .
 .uv-repair-recovery strong {display:flex;align-items:center;gap:6px;font-size:.8rem;}
 .uv-repair-recovery p {margin:0;}
 .uv-repair-recovery .unity-export-select {min-width:0;}
+
+/* M2.5 automatic surface-space PBR fidelity and conservative mesh diagnostics */
+.uv-repair-quality,.uv-repair-health {display:grid;gap:6px;border-top:1px solid rgba(130,170,185,.18);
+  padding-top:9px;min-width:0;}
+.uv-repair-quality .meta-row {font-size:.74rem;gap:6px;min-width:0;}
+.uv-repair-quality .meta-row strong {font-size:.7rem;text-align:right;}
+.uv-repair-health span {font-size:.72rem;line-height:1.45;}
+.uv-repair-quality small,.uv-repair-health small {opacity:.72;line-height:1.45;}

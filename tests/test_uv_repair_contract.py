@@ -26,6 +26,11 @@ class UVRepairContractTest(unittest.TestCase):
         self.assertIn('bpy.ops.object.bake(type="NORMAL"', source)
         self.assertIn('bpy.ops.object.bake(type="EMIT"', source)
         self.assertIn('"SourceMaps"', RUST.read_text(encoding="utf-8"))
+        self.assertIn('from uv_texture_fidelity import (', source)
+        self.assertIn('def sample_texture_fidelity(', source)
+        self.assertIn('def remove_orphan_geometry_only(', source)
+        self.assertIn('stage("texture_fidelity")', source)
+        self.assertIn('Texture_Quality.json', source)
         # Blender 5.1 glTF exporter cannot write directly to Windows long
         # canonicalized archive paths (\\\\?\\C:\\...). Keep it in short temp.
         self.assertIn('stage_geometry_glb(output / "geometry.glb", bpy.ops.export_scene.gltf)', source)
@@ -58,6 +63,10 @@ class UVRepairContractTest(unittest.TestCase):
         self.assertIn("fn list_uv_repair_attempts(", rust)
         self.assertIn("fn resume_uv_repair(", rust)
         self.assertIn("audit_source_triangles(&original)", rust)
+        self.assertIn("const FIDELITY_WORKER:", rust)
+        self.assertIn("fn verify_texture_quality(", rust)
+        self.assertIn("verify_texture_quality(&report,&folder)?", rust)
+        self.assertIn("safe_cleanup:bool", rust)
         self.assertIn("new UV island count is greater than source count", rust)
 
 

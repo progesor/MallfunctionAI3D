@@ -78,6 +78,24 @@ export interface UvRepairResult {
   oldIslands: number;
   newIslands: number;
   sourceUntouched: boolean;
+  quality?: {
+    passed: boolean;
+    qualityStatus: string;
+    maps: Record<string, { role: string; sampleCount: number;
+      meanAbsoluteError: number; p95AbsoluteError: number; passed: boolean }>;
+    uvStretch?: { source: { p95Anisotropy: number | null };
+      rebuilt: { p95Anisotropy: number | null } };
+  };
+  meshHealth?: {
+    source: { boundaryEdges: number; nonManifoldEdges: number;
+      looseVertices: number; zeroAreaFaces: number; connectedComponents: number;
+      exactOverlappingFaceCandidates: number; tinyHoleLoopCandidates: number };
+    repairedWorking: { boundaryEdges: number; nonManifoldEdges: number;
+      looseVertices: number; zeroAreaFaces: number; connectedComponents: number;
+      exactOverlappingFaceCandidates: number; tinyHoleLoopCandidates: number };
+    safeCleanup: { applied: boolean; removedLooseVertices: number;
+      visibleTrianglesPreserved: boolean };
+  };
 }
 export type UnityPipeline = 'Auto' | 'URP' | 'HDRP';
 export interface UnityProjectInfo {
@@ -130,8 +148,9 @@ export const bridge = {
   lodReport: (assetId: string) => invoke<LodResult | null>('blender_lod_report', { assetId }),
   lodBinary: (assetId: string, index: number) => invoke<string>('blender_read_lod', { assetId, index }),
   repairUV: (assetId: string, textureExportDir: string, preset: UvRepairPreset,
-    resolution: number, seamAngle: number, weld: boolean) => invoke<UvRepairResult>('repair_asset_uv', {
-    assetId, textureExportDir, preset, resolution, seamAngle, weld,
+    resolution: number, seamAngle: number, weld: boolean,
+    safeCleanup: boolean) => invoke<UvRepairResult>('repair_asset_uv', {
+    assetId, textureExportDir, preset, resolution, seamAngle, weld, safeCleanup,
   }),
   uvRepairAttempts: (assetId: string) =>
     invoke<RecoverableUvRepair[]>('list_uv_repair_attempts', { assetId }),

@@ -20,6 +20,7 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
   const [resolution,setResolution] = useState(1024);
   const [seamAngle,setSeamAngle] = useState(62);
   const [weld,setWeld] = useState(true);
+  const [safeCleanup,setSafeCleanup] = useState(true);
   const [advanced,setAdvanced] = useState(false);
   const [result,setResult] = useState<UvRepairResult|null>(null);
   const [error,setError] = useState('');
@@ -58,7 +59,7 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
     if (!selected || busy || !canRepair)return;
     setBusy(true);setError('');setResult(null);
     try {
-      const repaired=await bridge.repairUV(asset.id,selected,preset,resolution,seamAngle,weld);
+      const repaired=await bridge.repairUV(asset.id,selected,preset,resolution,seamAngle,weld,safeCleanup);
       if (!repaired.sourceUntouched || repaired.newIslands<1 ||
           repaired.newIslands>repaired.oldIslands ||
           repaired.asset.id===asset.id) {
@@ -102,7 +103,9 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
   const enabled=canRepair && asset.materialCount===1 && !!selected && !loading && !busy;
   return <section className="uv-repair-panel" aria-label="Auto UV ve PBR Repair" data-testid="uv-repair-panel">
     <div className="card-heading"><div><Wrench size={16}/><strong>Auto UV + Texture Repair</strong></div></div>
-    <p className="block-description">Mesh korunarak daha bütünlüklü UV adaları ve 5 ayrı PBR map yeniden hazırlanır. Kaynak hiç değişmez; yeni model arşive eklenir.</p>
+    <p className="block-description">Mesh korunarak UV atlası ve 5 PBR haritası hazırlanır.
+      Renk/Metallic/Roughness/AO dokuları aynı 3D yüzey noktalarında karşılaştırılır.
+      Kalite eşiklerini geçmeyen sonuç otomatik arşive eklenmez; kaynak değişmez.</p>
     <label className="unity-export-select"><span>PBR KAYNAĞI</span><div><select
       aria-label="UV Repair PBR sürümü" value={selected} disabled={busy||loading}
       onChange={e=>{setSelected(e.target.value);setResult(null);}}>
@@ -132,6 +135,11 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
     {advanced&&<label className="uv-repair-toggle"><input type="checkbox" checked={weld} disabled={busy}
       onChange={e=>{setWeld(e.target.checked);setResult(null);}}/>
       <span>UV sınırındaki aynı konumlu noktaları yalnız çalışma kopyasında birleştir (güvenli kontrol)</span></label>}
+    {advanced&&<label className="uv-repair-toggle"><input type="checkbox" checked={safeCleanup}
+      disabled={busy} onChange={e=>setSafeCleanup(e.target.checked)}/>
+      <span>Güvenli mesh temizliği: yalnızca hiçbir yüzeye bağlı olmayan nokta/kenarları kaldır.
+        Delikler, görünür çakışan yüzler ve normal yönleri otomatik değiştirilmez.</span>
+    </label>}
     <button type="button" className="btn btn-outline btn-full" data-testid="uv-repair-button"
       disabled={!enabled} onClick={()=>void run()}>
       {busy?<LoaderCircle className="spin" size={15}/>:<Layers3 size={15}/>}
@@ -184,6 +192,26 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
           Unity aktarımından önce temiz modelin yüzeyini görsel olarak kontrol et.
           Kabul yöntemi Repair_Manifest.json dosyasına kaydedildi.
         </p>}
+      {result.quality?.passed&&<div className="uv-repair-quality" data-testid="uv-repair-quality">
+        <strong>3D yüzey texture sadakati: otomatik kontrolden geçti</strong>
+        {Object.values(result.quality.maps).map(map=><div key={map.role} className="meta-row">
+          <span>{map.role}</span>
+          <strong>MAE {(map.meanAbsoluteError*100).toFixed(2)}% · P95 {(map.p95AbsoluteError*100).toFixed(1)}%</strong>
+        </div>)}
+        <small>Normal/tangent, renk sınırları ve kuyruk birleşimi gerçek model üzerinde
+          ayrıca görsel olarak onaylanmalıdır. UV adası sayısı tek başına başarı ölçütü değildir.</small>
+      </div>}
+      {result.meshHealth&&<div className="uv-repair-health">
+        <strong>Mesh sağlık kontrolü</strong>
+        <span>Açık sınır kenarları: {result.meshHealth.repairedWorking.boundaryEdges} ·
+          Non-manifold kenarlar: {result.meshHealth.repairedWorking.nonManifoldEdges}</span>
+        <span>Bağlantısız silinen nokta: {result.meshHealth.safeCleanup.removedLooseVertices} ·
+          Sıfır alanlı çalışma yüzü: {result.meshHealth.repairedWorking.zeroAreaFaces}</span>
+        <span>Üst üste görünen aynı-yönlü yüz adayları: {result.meshHealth.repairedWorking.exactOverlappingFaceCandidates} ·
+          Küçük kapalı delik sınırı adayları: {result.meshHealth.repairedWorking.tinyHoleLoopCandidates}</span>
+        <small>Bunlar tanı verileridir; otomatik delik doldurma veya görünür
+          üst üste binmiş yüzeyleri silme yapılmaz.</small>
+      </div>}
       <button type="button" className="btn btn-outline btn-full"
         onClick={()=>void onOpen(result.asset)}>Temiz modeli 3D Inspector’da aç</button>
       <button type="button" className="btn btn-ghost btn-full"

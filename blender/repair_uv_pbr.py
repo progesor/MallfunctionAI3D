@@ -14,6 +14,7 @@ It never changes the original GLB or the validated input maps.
 - Working .blend and UV SVG are kept for optional manual intervention.
 """
 import argparse
+from array import array
 import heapq
 import json
 import math
@@ -29,6 +30,15 @@ from pathlib import Path
 import bpy
 import bmesh
 from mathutils import Vector
+# Blender background --python does not always add the worker directory to
+# sys.path. Resolve our pinned Blender-free QA module from next to this file.
+_worker_root = str(Path(__file__).resolve().parent)
+if _worker_root not in sys.path:
+    sys.path.insert(0, _worker_root)
+from uv_texture_fidelity import (
+    ROLE_LIMITS, compare_surface_maps, mesh_uv_stretch,
+    REFERENCE_FACE_ID, surface_uv_pairs_reference,
+)
 
 MAPS = ("baseColor", "normal", "metallic", "roughness", "occlusion")
 
@@ -46,6 +56,7 @@ def parse_args():
     parser.add_argument("--angle", type=int, default=62)
     parser.add_argument("--margin", type=int, default=24)
     parser.add_argument("--weld", type=int, choices=(0, 1), default=1)
+    parser.add_argument("--safe-cleanup", type=int, choices=(0, 1), default=1)
     parser.add_argument("--preset", choices=("preserve", "plush"), default="preserve")
     return parser.parse_args(sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else [])
 
@@ -212,7 +223,10 @@ def mark_curvature_seams(mesh, threshold_degrees):
         components = face_components(bm)
         for faces in components:
             edges = {edge for face in faces for edge in face.edges}
-            if not any(edge.is_boundary or edge.seam for edge in edges):
+            # Curvature seams can be isolated and may not actually open a
+            # smooth closed volume (tail/cone). Add a hidden meridian on
+            # *every manifold closed component*, even if it had sharp seams.
+            if edges and all(edge.is_manifold for edge in edges):
                 edges_marked += cut_closed_component(bm, faces)
         bm.to_mesh(mesh)
         mesh.update()
@@ -222,85 +236,122 @@ def mark_curvature_seams(mesh, threshold_degrees):
 
 
 def new_uv(target, angle, margin_px, resolution):
+    """Try multiple seam plans and choose lowest UV stretch, not island count."""
     mesh = target.data
     original = mesh.uv_layers.active
     if original is None:
         raise RuntimeError("Source mesh has no active UV map")
-    # Blender invalidates RNA layer handles when Edit Mode toggles or BMesh
-    # writes back to a Mesh. Keep PLAIN STRING names, not the layer handles.
     old_name = str(original.name)
     old_count = uv_island_count(mesh, old_name)
+    source_stretch = mesh_uv_stretch(mesh, old_name)
     new_layer = mesh.uv_layers.new(name="AI3D_Clean")
     clean_name = str(new_layer.name)
-    # Never access new_layer again after any mesh/bpy operator; look up by name.
+    attempted = []
+    best = None
     last_error = None
-    for threshold in [angle, min(88, angle + 12), min(88, angle + 22)]:
+
+    def unwrap_threshold(threshold):
+        # Blender can invalidate MeshUVLoopLayer references on BMesh writes or
+        # Edit/Object mode switches. Always reacquire using a stable name.
         seams, components = mark_curvature_seams(target.data, threshold)
-        live_layer = target.data.uv_layers.get(clean_name)
-        if live_layer is None:
-            raise RuntimeError("Clean UV layer vanished after BMesh update: " + clean_name)
-        target.data.uv_layers.active = live_layer
-        live_layer.active_render = True
+        live = target.data.uv_layers.get(clean_name)
+        if live is None:
+            raise RuntimeError("Clean UV layer vanished after BMesh update")
+        target.data.uv_layers.active = live
+        live.active_render = True
         bpy.ops.object.select_all(action="DESELECT")
         target.select_set(True)
         bpy.context.view_layer.objects.active = target
         bpy.ops.object.mode_set(mode="EDIT")
         try:
             bpy.ops.mesh.select_all(action="SELECT")
-            unwrap_result = bpy.ops.uv.unwrap(
+            result = bpy.ops.uv.unwrap(
                 method="ANGLE_BASED", margin_method="FRACTION",
                 margin=float(margin_px) / resolution,
             )
-            if "FINISHED" not in unwrap_result:
-                raise RuntimeError("Blender UV unwrap did not finish")
+            if "FINISHED" not in result:
+                raise RuntimeError("Blender angle-based unwrap failed")
             bpy.ops.uv.average_islands_scale()
             bpy.ops.uv.pack_islands(
                 rotate=True, margin_method="FRACTION",
                 margin=float(margin_px) / resolution,
             )
-        except Exception as exc:
-            last_error = str(exc)
-            continue
         finally:
             bpy.ops.object.mode_set(mode="OBJECT")
-
-        # The pre-edit live_layer handle is INVALID here on Blender 5.x.
-        # Reacquire the UV layer after switching to Object Mode.
-        live_layer = target.data.uv_layers.get(clean_name)
-        if live_layer is None:
-            raise RuntimeError("Clean UV layer not found after unwrap: " + clean_name)
+        live = target.data.uv_layers.get(clean_name)
+        if live is None:
+            raise RuntimeError("Clean UV layer missing after unwrap")
         uv_values = [(float(loop.uv[0]), float(loop.uv[1]))
-                     for loop in live_layer.data]
-        islands = uv_island_count(target.data, clean_name)
+                     for loop in live.data]
+        count = uv_island_count(target.data, clean_name)
         valid = bool(uv_values) and all(
-            math.isfinite(u) and math.isfinite(v)
-            and -0.001 <= u <= 1.001 and -0.001 <= v <= 1.001
+            math.isfinite(u) and math.isfinite(v) and
+            -.001 <= u <= 1.001 and -.001 <= v <= 1.001
             for u, v in uv_values
         )
         if valid:
-            extent_u = max(u for u, _ in uv_values) - min(u for u, _ in uv_values)
-            extent_v = max(v for _, v in uv_values) - min(v for _, v in uv_values)
-            valid = extent_u > 0.2 and extent_v > 0.2
-        if valid and islands <= max(12, math.ceil(old_count * .9)):
-            return old_name, clean_name, {
-                "strategy": "curvature-seams-angle-unwrap",
-                "seamAngleDeg": threshold,
-                "seamEdges": seams,
-                "connectedComponents": components,
-                "oldUVIslands": old_count,
-                "newUVIslands": islands,
-            }
-        last_error = (
-            f"UV unwrap quality check failed: valid={valid}, "
-            f"islands={islands}, original={old_count}"
-        )
+            valid = (max(u for u, _ in uv_values) - min(u for u, _ in uv_values) > .2
+                     and max(v for _, v in uv_values) - min(v for _, v in uv_values) > .2)
+        metrics = mesh_uv_stretch(target.data, clean_name)
+        p95 = metrics.get("p95Anisotropy")
+        good = (valid and count > 0 and count <= old_count
+                and p95 is not None and math.isfinite(p95))
+        candidate = {
+            "seamAngleDeg": threshold,
+            "seamEdges": seams,
+            "connectedComponents": components,
+            "newUVIslands": count,
+            "p95Anisotropy": p95,
+            "valid": bool(good),
+        }
+        # Lower stretch is more important than reducing UV island count.
+        # Penalty is bounded and only breaks close stretch scores.
+        score = float(p95) * (1. + .22 * count / max(old_count, 1)) if good else float("inf")
+        return candidate, score
 
-    # Explicitly reported fallback. Reacquire by name before AND after ops.
-    live_layer = target.data.uv_layers.get(clean_name)
-    if live_layer is None:
-        raise RuntimeError("Clean UV layer vanished before fallback: " + clean_name)
-    target.data.uv_layers.active = live_layer
-    live_layer.active_render = True
+    angles = list(dict.fromkeys([
+        angle, max(35, angle - 12), max(35, angle - 24),
+    ]))
+    for threshold in angles:
+        try:
+            candidate, score = unwrap_threshold(threshold)
+        except Exception as exc:
+            last_error = str(exc)
+            attempted.append({"seamAngleDeg": threshold, "valid": False,
+                              "reason": last_error})
+            continue
+        attempted.append(candidate)
+        if score < (best["score"] if best else float("inf")):
+            best = {"score": score, "candidate": candidate}
+        if not candidate["valid"]:
+            last_error = "Atlas UV stretch or bounds check failed at {}°".format(threshold)
+
+    if best is not None:
+        winning = best["candidate"]
+        # Apply chosen plan *again* so the saved seam flags and UV coordinates
+        # match the quality-selected atlas (not the last trial plan).
+        winner, _ = unwrap_threshold(winning["seamAngleDeg"])
+        if not winner["valid"]:
+            raise RuntimeError("Winning UV plan was not reproducible")
+        return old_name, clean_name, {
+            "strategy": "curvature-seams-quality-ranked",
+            "seamAngleDeg": winner["seamAngleDeg"],
+            "seamEdges": winner["seamEdges"],
+            "connectedComponents": winner["connectedComponents"],
+            "oldUVIslands": old_count,
+            "newUVIslands": winner["newUVIslands"],
+            "sourceStretch": source_stretch,
+            "rebuiltStretch": mesh_uv_stretch(target.data, clean_name),
+            "triedPlans": attempted,
+            "selectionReason": "lowest-p95-stretch-before-island-count",
+        }
+
+    # Fallback is explicitly reported and still goes through texture QC.
+    live = target.data.uv_layers.get(clean_name)
+    if live is None:
+        raise RuntimeError("Clean UV layer vanished before fallback")
+    target.data.uv_layers.active = live
+    live.active_render = True
     bpy.ops.object.select_all(action="DESELECT")
     target.select_set(True)
     bpy.context.view_layer.objects.active = target
@@ -314,21 +365,24 @@ def new_uv(target, angle, margin_px, resolution):
     finally:
         bpy.ops.object.mode_set(mode="OBJECT")
     if "FINISHED" not in result:
-        raise RuntimeError("UV Smart fallback did not finish")
-    live_layer = target.data.uv_layers.get(clean_name)
-    if live_layer is None:
-        raise RuntimeError("Clean UV layer missing after fallback: " + clean_name)
-    points = [(float(loop.uv[0]), float(loop.uv[1]))
-              for loop in live_layer.data]
-    if not points or max(u for u, v in points) - min(u for u, v in points) < .2 or \
-       max(v for u, v in points) - min(v for u, v in points) < .2:
-        raise RuntimeError("Generated UV atlas is degenerate; original asset remains unchanged")
+        raise RuntimeError("UV Smart fallback failed")
+    live = target.data.uv_layers.get(clean_name)
+    if live is None:
+        raise RuntimeError("Clean UV layer vanished after fallback")
+    coords = [(float(loop.uv[0]),float(loop.uv[1])) for loop in live.data]
+    if not coords or max(u for u,v in coords)-min(u for u,v in coords)<.2 or \
+       max(v for u,v in coords)-min(v for u,v in coords)<.2:
+        raise RuntimeError("Fallback UV atlas is degenerate")
     return old_name, clean_name, {
         "strategy": "smart-project-fallback",
-        "reason": last_error or "Adaptive unwrap did not pass quality checks",
+        "reason": last_error or "Quality-ranked unwrap had no valid plan",
         "oldUVIslands": old_count,
-        "newUVIslands": uv_island_count(target.data, clean_name),
+        "newUVIslands": uv_island_count(target.data,clean_name),
+        "sourceStretch": source_stretch,
+        "rebuiltStretch": mesh_uv_stretch(target.data,clean_name),
+        "triedPlans": attempted,
     }
+
 
 
 def emit_uv_layout(mesh, layer_name, output):
@@ -535,6 +589,190 @@ def stage_geometry_glb(destination, exporter):
     print("AI3D_GLTF_ARCHIVED:" + str(destination), flush=True)
 
 
+def image_float_pixels(image):
+    """Read Blender pixels once per image; 2K maps are ~64 MiB each."""
+    if image is None or image.size[0] < 1 or image.size[1] < 1:
+        raise ValueError("Texture image has no pixels")
+    pixels = array("f", [0.0]) * (int(image.size[0]) * int(image.size[1]) * 4)
+    image.pixels.foreach_get(pixels)
+    return pixels
+
+
+def mesh_health(mesh):
+    """Read-only mesh diagnostics: possible holes and overlapping faces.
+
+    A candidate is only a diagnosis. A seam loop, eye socket or layered
+    fabric can be intentional; deleting/closing without review is unsafe.
+    """
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(mesh)
+        components = face_components(bm)
+        boundary = [edge for edge in bm.edges if edge.is_boundary]
+        nonmanifold = sum(1 for edge in bm.edges if not edge.is_manifold)
+        loose = sum(1 for v in bm.verts if not v.link_faces)
+        zero_faces = sum(1 for face in bm.faces if face.calc_area() <= 1e-16)
+
+        def oriented_key(face):
+            if len(face.verts) != 3:
+                return None
+            points = [tuple(float(v.co[i]) for i in range(3))
+                      for v in face.verts]
+            rotations = [tuple(points[i:] + points[:i]) for i in range(3)]
+            return (face.material_index, min(rotations))
+        # Even exact positional coincidence is ONLY a candidate. Separate
+        # layered meshes can represent meaningful fur or shell geometry.
+        seen_faces = set()
+        exact_overlap = 0
+        for face in bm.faces:
+            key = oriented_key(face)
+            if key is None:
+                continue
+            if key in seen_faces:
+                exact_overlap += 1
+            else:
+                seen_faces.add(key)
+
+        referenced = [vert for vert in bm.verts if vert.link_faces]
+        if referenced:
+            lo = [min(float(v.co[axis]) for v in referenced) for axis in range(3)]
+            hi = [max(float(v.co[axis]) for v in referenced) for axis in range(3)]
+            world_size = math.sqrt(sum((hi[i] - lo[i]) ** 2 for i in range(3)))
+        else:
+            world_size = 0.0
+        boundary_set = set(boundary)
+        visited = set()
+        tiny_loops = 0
+        for edge in boundary:
+            if edge in visited:
+                continue
+            queue = [edge]
+            visited.add(edge)
+            part_edges = []
+            part_verts = set()
+            while queue:
+                current = queue.pop()
+                part_edges.append(current)
+                for vert in current.verts:
+                    part_verts.add(vert)
+                    for adjacent in vert.link_edges:
+                        if adjacent in boundary_set and adjacent not in visited:
+                            visited.add(adjacent)
+                            queue.append(adjacent)
+            if not 3 <= len(part_edges) <= 8 or world_size <= 0:
+                continue
+            if any(sum(1 for e in vert.link_edges if e in boundary_set) != 2
+                   for vert in part_verts):
+                continue
+            low = [min(float(v.co[i]) for v in part_verts) for i in range(3)]
+            high = [max(float(v.co[i]) for v in part_verts) for i in range(3)]
+            diameter = math.sqrt(sum((high[i] - low[i]) ** 2 for i in range(3)))
+            if diameter <= world_size * 0.02:
+                tiny_loops += 1
+        return {
+            "connectedComponents": len(components),
+            "boundaryEdges": len(boundary),
+            "nonManifoldEdges": nonmanifold,
+            "looseVertices": loose,
+            "zeroAreaFaces": zero_faces,
+            "exactOverlappingFaceCandidates": exact_overlap,
+            "tinyHoleLoopCandidates": tiny_loops,
+            "faces": len(bm.faces),
+            "vertices": len(bm.verts),
+            "note": "Read-only overlap/hole candidates; no visible faces are "
+                    "deleted and no holes are automatically filled.",
+        }
+    finally:
+        bm.free()
+
+
+
+def remove_orphan_geometry_only(target):
+    """Remove loose vertices/wires, NEVER any vertex belonging to a polygon.
+
+    Duplicate visible faces, self-intersections and small holes require
+    separate user-driven repair. Rewriting those automatically can destroy
+    the modeled fabric seams and break the original texture correspondence.
+    """
+    source_mesh = target.data
+    candidate = source_mesh.copy()
+    original_faces = triangles(source_mesh)
+    bm = bmesh.new()
+    removed = 0
+    try:
+        bm.from_mesh(candidate)
+        orphaned = [vert for vert in bm.verts if not vert.link_faces]
+        removed = len(orphaned)
+        if orphaned:
+            bmesh.ops.delete(bm, geom=orphaned, context="VERTS")
+            bm.to_mesh(candidate)
+            candidate.update()
+    finally:
+        bm.free()
+    if not removed:
+        bpy.data.meshes.remove(candidate)
+        return {"applied": True, "removedLooseVertices": 0,
+                "visibleTrianglesPreserved": True}
+    if triangles(candidate) != original_faces:
+        bpy.data.meshes.remove(candidate)
+        raise RuntimeError(
+            "Safe mesh cleanup changed visible triangle count; refusing")
+    target.data = candidate
+    bpy.data.meshes.remove(source_mesh)
+    return {"applied": True, "removedLooseVertices": removed,
+            "visibleTrianglesPreserved": True}
+
+
+def sample_texture_fidelity(target, source_images, baked_images,
+                            reference_mesh, old_uv, new_uv,
+                            stable_surface_pairs, uv_provenance):
+    """Surface-space texture comparison, independent of atlas island count.
+
+    The original UV coordinates are read per triangle loop. Every map is
+    sampled on exactly the same mesh surface points before and after rebake.
+    Normal colors cannot be directly compared because tangent frames change;
+    normal validation remains a separate visual/editor acceptance gate.
+    """
+    mesh = target.data
+    pairs = stable_surface_pairs
+    if not pairs or not uv_provenance["originalUvProvenanceIntact"]:
+        raise RuntimeError("Texture fidelity source UV provenance was not retained")
+    data = {}
+    for role in ROLE_LIMITS:
+        src = source_images[role]
+        dst = baked_images[role]
+        src_pixels = image_float_pixels(src)
+        dst_pixels = image_float_pixels(dst)
+        item = compare_surface_maps(
+            pairs, src_pixels, (int(src.size[0]), int(src.size[1])),
+            dst_pixels, (int(dst.size[0]), int(dst.size[1])), role,
+        )
+        data[role] = item
+        # Large float buffers must not be retained for next texture.
+        del src_pixels, dst_pixels
+        print("AI3D_FIDELITY:{}:MAE={:.5f}:P95={:.5f}:{}".format(
+            role, item["meanAbsoluteError"], item["p95AbsoluteError"],
+            "PASS" if item["passed"] else "FAIL"), flush=True)
+    stretch_old = mesh_uv_stretch(reference_mesh, old_uv)
+    stretch_new = mesh_uv_stretch(mesh, new_uv)
+    passed = all(item["passed"] for item in data.values())
+    return {
+        "schemaVersion": 1,
+        "evaluated": True,
+        "passed": passed,
+        "method": "same-3d-surface-barycentric-UV-reprojection",
+        "sampleCount": len(pairs),
+        "maps": data,
+        "uvStretch": {"source": stretch_old, "rebuilt": stretch_new},
+        "sourceUvProvenance": uv_provenance,
+        "normalValidation": "tangent-space-rebake; visual-check-required",
+        "qualityStatus": "passed" if passed else "needs-review",
+        "note": "The four comparable PBR roles are scored separately. "
+                "A reduced island count alone cannot pass. "
+                "World-space normal rendering and tail seam need visual approval.",
+    }
+
+
 def main():
     args = parse_args()
     if not 35 <= args.angle <= 88 or not 4 <= args.margin <= 48:
@@ -589,8 +827,24 @@ def main():
     target.name = "AI3D_Repaired_Target"
     target.data = target.data.copy()
     before_triangles = triangles(target.data)
+    # Stable polygon IDs are stamped BEFORE any welding, BMesh edit or UV
+    # unwrap. The unmodified baseline mesh keeps original triangle-corner UVs
+    # and supports a genuine source-vs-baked physical surface comparison.
+    mesh=target.data
+    if mesh.attributes.get(REFERENCE_FACE_ID) is not None:
+        raise RuntimeError("Source mesh already uses reserved face provenance ID")
+    attr=mesh.attributes.new(name=REFERENCE_FACE_ID, type="INT", domain="FACE")
+    for face in mesh.polygons:
+        attr.data[face.index].value=int(face.index)
+    reference_mesh=mesh.copy()
+    original_health = mesh_health(target.data)
     if before_triangles < 1 or not target.data.uv_layers:
         raise RuntimeError("UV repair requires triangles and existing UV0")
+    cleanup_report = {"applied": False, "removedLooseVertices": 0,
+                      "visibleTrianglesPreserved": True}
+    if args.safe_cleanup:
+        stage("safe_mesh_cleanup")
+        cleanup_report = remove_orphan_geometry_only(target)
     welded = 0
     # Safe seam welding: keep a backup of the complete editable mesh datablock.
     if args.weld:
@@ -605,6 +859,16 @@ def main():
                 bpy.data.meshes.remove(backup)
     stage("auto_unwrap")
     old_uv, new_uv_name, uv_report = new_uv(target, args.angle, args.margin, args.resolution)
+    # Critical: checking the old UV layer on the welded mesh against itself
+    # would miss UV corruption introduced by remove_doubles. Match every
+    # original face/corner to the current UV by stamped identity+position.
+    surface_pairs, uv_provenance = surface_uv_pairs_reference(
+        reference_mesh,target.data,old_uv,new_uv_name)
+    if not uv_provenance["originalUvProvenanceIntact"]:
+        raise RuntimeError(
+            "Weld/unwrap changed ORIGINAL triangle-corner UV mapping: "
+            +str(uv_provenance)+". Disable weld and retry; source unchanged.")
+    repaired_health = mesh_health(target.data)
     scene = bpy.context.scene
     previous_engine = scene.render.engine
     previous_samples = getattr(scene.cycles, "samples", 1) if hasattr(scene, "cycles") else 1
@@ -613,6 +877,8 @@ def main():
     scene.render.bake.margin = args.margin
     saved_maps = {}
     baked_images = {}
+    saved_quality_images = {}
+    source_images = {}
     try:
         bpy.ops.object.select_all(action="DESELECT")
         target.select_set(True)
@@ -622,13 +888,28 @@ def main():
             png = input_dir / f"m0_{role}.png"
             src_img = bpy.data.images.load(str(png), check_existing=False)
             src_img.colorspace_settings.name = "sRGB" if role == "baseColor" else "Non-Color"
+            source_images[role] = src_img
             out_png = map_dir / f"{role}.png"
             baked_images[role] = bake_image(target, role, src_img, old_uv, new_uv_name,
                                            out_png, args.resolution, args.margin)
+            # Quality checks MUST sample the SAVED PNG, not the transient
+            # in-memory Cycles bake buffer: encoding/color-space conversion
+            # could otherwise pass a texture later exported differently.
+            disk_image = bpy.data.images.load(str(out_png), check_existing=False)
+            disk_image.colorspace_settings.name = (
+                "sRGB" if role == "baseColor" else "Non-Color")
+            saved_quality_images[role] = disk_image
             saved_maps[role] = out_png.name
             print(f"AI3D_BAKE_MAP:{role}", flush=True)
         if triangles(target.data) != before_triangles:
             raise RuntimeError("Repair changed mesh triangle count")
+        stage("texture_fidelity")
+        quality = sample_texture_fidelity(
+            target, source_images, saved_quality_images,
+            reference_mesh, old_uv, new_uv_name, surface_pairs, uv_provenance)
+        (output / "Texture_Quality.json").write_text(
+            json.dumps(quality, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
         emit_uv_layout(target.data, new_uv_name, output / "UV_Layout.svg")
         # The new UV is first/active for glTF export. The old UV remains
         # available in the working blend for seam edits and comparisons.
@@ -662,6 +943,10 @@ def main():
             "resolution": args.resolution,
             "marginPixels": args.margin,
             "normalRebakedInTangentSpace": True,
+            "textureFidelity": quality,
+            "meshHealth": {"source": original_health,
+                           "repairedWorking": repaired_health,
+                           "safeCleanup": cleanup_report},
             "profile": args.preset,
             "heightBaked": False,
             "manualEditBlend": "Repair_Working.blend",

@@ -93,6 +93,7 @@ class FakeBlender:
         self.target = target
         self.old_count = old_count
         self.new_count = new_count
+        self.current_seam_angle = 62
         self.context = SimpleNamespace(
             view_layer=SimpleNamespace(objects=SimpleNamespace(active=None))
         )
@@ -114,10 +115,17 @@ class FakeBlender:
         self.target.data.generation += 1
         return {"FINISHED"}
 
-    def curvature_seams(self, mesh, _threshold):
+    def curvature_seams(self, mesh, threshold):
         # BMesh.to_mesh() also invalidates UVLayer wrappers.
         mesh.generation += 1
+        self.current_seam_angle = threshold
         return 7, 2
+
+    def uv_stretch(self, _mesh, name):
+        if name == "UVMap":
+            return {"p95Anisotropy": 1.0}
+        return {"p95Anisotropy": {62: 7.0, 50: 3.0, 38: 1.8}.get(
+            self.current_seam_angle, 4.0)}
 
     def uv_island_count(self, _mesh, name):
         return self.old_count if name == "UVMap" else self.new_count
@@ -132,6 +140,7 @@ class FakeBlender:
             "math": math,
             "uv_island_count": self.uv_island_count,
             "mark_curvature_seams": self.curvature_seams,
+            "mesh_uv_stretch": self.uv_stretch,
         }
         exec(compile(program, str(WORKER), "exec"), context)
         return context["new_uv"]
@@ -144,7 +153,11 @@ class UVModeSwitchRegression(unittest.TestCase):
         old, clean, report = fake.compile_new_uv()(target, 62, 24, 1024)
         self.assertEqual(old, "UVMap")
         self.assertEqual(clean, "AI3D_Clean")
-        self.assertEqual(report["strategy"], "curvature-seams-angle-unwrap")
+        self.assertEqual(report["strategy"], "curvature-seams-quality-ranked")
+        self.assertEqual(report["seamAngleDeg"], 38)
+        self.assertEqual(len(report["triedPlans"]), 3)
+        self.assertEqual(report["selectionReason"],
+                         "lowest-p95-stretch-before-island-count")
         self.assertEqual(report["newUVIslands"], 12)
         self.assertGreaterEqual(target.data.generation, 3)
 

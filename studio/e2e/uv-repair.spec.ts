@@ -47,7 +47,15 @@ async function openStudio(page:import('@playwright/test').Page, ready:boolean, r
               strategy:'curvature-seams-angle-unwrap',oldIslands:254,newIslands:116,sourceUntouched:true};
           case 'repair_asset_uv':
             calls.push(args);
-            return {asset:{...asset,id:'e33aca7a-61fe-49b1-a885-e23f6f97e7ef',title:'PLAYBOX Fox Plush · UV Clean'},
+            return {quality:{passed:true,qualityStatus:'passed',
+                maps:{baseColor:{role:'baseColor',sampleCount:30,meanAbsoluteError:0.012,
+                  p95AbsoluteError:0.06,passed:true}}},
+              meshHealth:{source:{boundaryEdges:9,nonManifoldEdges:13,looseVertices:2,
+                zeroAreaFaces:0,connectedComponents:9},
+                repairedWorking:{boundaryEdges:9,nonManifoldEdges:13,looseVertices:0,
+                zeroAreaFaces:0,connectedComponents:9},
+                safeCleanup:{applied:true,removedLooseVertices:2,visibleTrianglesPreserved:true}},
+              asset:{...asset,id:'e33aca7a-61fe-49b1-a885-e23f6f97e7ef',title:'PLAYBOX Fox Plush · UV Clean'},
               versionDir:'C:\\Test\\uv_repairs\\v2',reportPath:'C:\\Test\\uv_repairs\\v2\\Repair_Report.json',
               workingBlend:'C:\\Test\\uv_repairs\\v2\\Repair_Working.blend',uvLayout:'C:\\Test\\uv_repairs\\v2\\UV_Layout.svg',
               strategy:'curvature-seams-angle-unwrap',oldIslands:168,newIslands:18,sourceUntouched:true};
@@ -77,10 +85,11 @@ test('one-click UV repair preserves existing source and exposes optional overrid
   await expect(page.getByTestId('uv-repair-button')).toBeEnabled();
   await page.getByTestId('uv-repair-button').click();
   await expect(page.getByTestId('uv-repair-success')).toBeVisible();
+  await expect(page.getByTestId('uv-repair-quality')).toBeVisible();
   await expect(page.getByText(/168 → 18/)).toBeVisible();
   const calls=await page.evaluate(()=>(window as unknown as {__repairCalls:unknown[]}).__repairCalls);
   expect(calls).toEqual([{assetId:asset.id,textureExportDir:'C:\\Test\\texture_exports\\pbr_1024',
-    preset:'plush',resolution:1024,seamAngle:78,weld:true}]);
+    preset:'plush',resolution:1024,seamAngle:78,weld:true,safeCleanup:true}]);
   await expect(page.locator('.viewport-frame')).toBeVisible();
 });
 
