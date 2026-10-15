@@ -59,6 +59,18 @@ export interface UnityExportResult {
   sourceUntouched: boolean;
 }
 export interface UnityExportSummary { outputDir: string; generatedAt: string; triangles: [number, number, number] }
+export type UvRepairPreset = 'preserve' | 'plush';
+export interface UvRepairResult {
+  asset: Asset;
+  versionDir: string;
+  reportPath: string;
+  workingBlend: string;
+  uvLayout: string;
+  strategy: string;
+  oldIslands: number;
+  newIslands: number;
+  sourceUntouched: boolean;
+}
 export type UnityPipeline = 'Auto' | 'URP' | 'HDRP';
 export interface UnityProjectInfo {
   projectPath: string; editorVersion: string; pipeline: string;
@@ -109,6 +121,10 @@ export const bridge = {
   generateLods: (assetId: string) => invoke<LodResult>('blender_generate_lods', { assetId }),
   lodReport: (assetId: string) => invoke<LodResult | null>('blender_lod_report', { assetId }),
   lodBinary: (assetId: string, index: number) => invoke<string>('blender_read_lod', { assetId, index }),
+  repairUV: (assetId: string, textureExportDir: string, preset: UvRepairPreset,
+    resolution: number, seamAngle: number, weld: boolean) => invoke<UvRepairResult>('repair_asset_uv', {
+    assetId, textureExportDir, preset, resolution, seamAngle, weld,
+  }),
   blenderDetect: () => invoke<string | null>('blender_detect'),
   pickImage: () => open({ multiple: false, directory: false, filters: [{ name: 'Reference image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] }),
   pickGlb: () => open({ multiple: false, directory: false, filters: [{ name: 'glTF Binary', extensions: ['glb'] }] }),

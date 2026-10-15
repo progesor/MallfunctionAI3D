@@ -452,3 +452,17 @@ button { transition: background-color .14s ease, color .14s ease, border-color .
 .unity-native-project span, .unity-native-result small { overflow-wrap: anywhere; font-size: .76rem; }
 .unity-native-project small { opacity: .75; }
 .unity-native-result p { margin: 0; line-height: 1.5; }
+
+/* Compact Auto UV/PBR workflow; leaves existing Inspector and Unity UI untouched. */
+.uv-repair-panel { display:grid;gap:10px;min-width:0; }
+.uv-repair-panel .card-heading { margin:0; }
+.uv-repair-panel .block-description { margin:0; }
+.uv-repair-panel .unity-export-select { min-width:0; }
+.uv-repair-panel .unity-export-select div,
+.uv-repair-panel .unity-export-select select { max-width:100%;min-width:0; }
+.uv-repair-advanced {border:0;background:transparent;color:var(--text-soft,#a7bfca);
+  text-align:left;cursor:pointer;font-size:.76rem;padding:4px 0; }
+.uv-repair-result {display:grid;gap:8px;padding:10px;border:1px solid rgba(123,186,157,.3);
+  border-radius:8px;overflow-wrap:anywhere;font-size:.78rem; }
+.uv-repair-result strong {display:flex;align-items:center;gap:6px; }
+.uv-repair-result small {line-height:1.5;opacity:.78; }

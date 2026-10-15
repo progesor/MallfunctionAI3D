@@ -1,0 +1,108 @@
+# M2.4 · Auto UV Atlas + PBR Repair (Fox pilot)
+Date: 2026-10-15
+Branch: feat/desktop-studio-foundation (Draft PR #1).
+Status: code-integrated pilot; real Blender and Unity HDRP visual tests pending.
+GitHub Actions: manually triggered only. Do not run CI for this patch.
+
+## Product scope
+
+This workflow keeps the source GLB and existing Blender LOD/Texture Export
+history untouched. Rather than the user's prior Smart UV / image-by-image
+scripts, it combines geometry-aware UV seam planning with explicit semantic
+BaseColor, Normal, Metallic, Roughness and AO source maps from M2.1.
+
+The default does NOT remesh or generate a new AI object. Safe UV-split vertex
+welding is attempted on a disposable mesh and discarded if triangle count or
+bounds change. Curvature seams + a hidden meridian cut on closed components,
+Blender angle-based unwrap and island packing are attempted first. Smart UV
+is a reported fallback, not silently advertised as semantic unwrapping.
+
+No automatic anatomical segmentation is claimed; recognizing "tail", "head"
+and "body" is a later optional/manual refinement.
+
+## Studio workflow
+
+1. Choose PLAYBOX Fox from Asset Library, SOURCE preview. Ensure 5-map PBR
+   Texture Export exists; select the 1024px version (or export once).
+2. Select Auto UV + Texture Repair and its latest verified source map version.
+3. Choose Natural / Preserve for faithful conversion, or Peluş / kumaş to
+   globally set Metallic=0, effective Roughness>=0.82 (no AI material masking
+   of nose/eyes yet).
+4. Choose 512/1024/2048 atlas, 1024 default. Advanced seam-angle options
+   45/62/78 degrees and reversible vertex-weld checkbox.
+5. Click Auto UV + PBR Repair once. Blender bakes five separate semantic maps
+   and saves report, UV atlas SVG and editable .blend. Existing ComfyUI does
+   not run. Source images sample explicitly from old UV, bake targets new UV.
+6. Rust verifies triangles, UV island count, map PNG size, SHA of immutable
+   source, and reconstructed glTF ORM channels: R=AO, G=Roughness, B=Metallic.
+   The final self-contained PBR GLB has three images, five semantic roles and
+   correct glTF material factors, and is stored as an independent new library
+   asset. Source asset/version is not replaced.
+7. Click "Temiz modeli 3D Inspector’da aç" to compare new and original PBR.
+   The new asset can use the existing LOD -> Texture Export -> Unity native
+   URP/HDRP export sequence. Downstream export is not yet auto-chained.
+
+## Versioned files
+
+Under assets/<sourceId>/uv_repairs/<newUniqueId>/:
+- SourceMaps/m0_baseColor.png, m0_normal.png, m0_metallic.png,
+  m0_roughness.png, m0_occlusion.png (verified immutable snapshots)
+- repair_uv_pbr.py (pinned worker), Repair_Run.log
+- Textures/{baseColor,normal,metallic,roughness,occlusion,ORM}.png
+- UV_Layout.svg, Repair_Working.blend (both UV layers retained)
+- geometry.glb and Repaired.glb (new UV, source triangles preserved)
+- Repair_Report.json, Repair_Manifest.json
+
+A successful repaired GLB is also stored as a *new* managed asset in SQLite
+with parent asset ID, parent SHA and repair version provenance.
+
+## PBR baking and limitations
+
+EMIT bake (on source old UV) separately transfers BaseColor, Metallic,
+Roughness and AO. Cycles tangent-space NORMAL bake is performed on the new
+atlas; simply copying an old normal map after changing UV would be wrong.
+Bake margin = 24px. BaseColor stays sRGB, scalar/normal images Non-Color.
+The glTF-packed ORM is built in Rust; Photoshop edits can use separated maps.
+Source baseColorFactor, AO strength and normal scale are retained.
+Preserve mode keeps original metal/rough factors; Plush mode bakes effective
+values into the atlas and sets both material factors to 1 to avoid multiplying
+twice. Height Map is not created since Fox GLB provides no such source.
+
+Automatic UV count and triangle gates cannot alone guarantee visually clean
+normal seams or anatomically meaningful islands. Actual visual acceptance on
+the Fox tail/body region is required. Glossy patches that exist in BaseColor
+will not be repaired by a Metallic/Roughness preset.
+
+Manual .blend editing is *available* as a working file, but Studio does not
+yet automatically rebake edited Blender UVs. That is a specific next stage
+after this auto mode is tested.
+
+## Offline validation (no GitHub CI)
+
+From repository root on the Windows machine:
+  python -m unittest discover -s tests -p "test_uv_repair_contract.py"
+  python -m py_compile blender/repair_uv_pbr.py
+  cd studio
+  npm run build
+  npx playwright test e2e/uv-repair.spec.ts --workers=1
+  cd ..
+  cargo test --manifest-path studio/src-tauri/Cargo.toml --lib uv_repair
+
+The Python static test does NOT replace real Blender Cycles baking. For real
+acceptance run the UI on Fox with its existing Texture Export and ensure:
+1. Source SHA unchanged; triangles unchanged; new islands <= old islands.
+2. Clean UV SVG with larger coherent regions; verify no noticeable stretches.
+3. Every baked PNG exists and glTF Inspector finds 5 correct semantic maps.
+4. Tail-body seam in PBR/Metallic/Roughness/Normal visual inspection.
+5. Fox repaired version separately imported into Unity HDRP; normal texture
+   direction, transparency, material response and LOD behavior unchanged.
+
+Do not call the pipeline "production accepted" without a real Blender and
+Unity test. Never automatically run multiple models for this first pilot.
+
+## Next iteration once Fox acceptance passes
+
+Interactive island/seam overrides and manually edited .blend -> fresh
+versioned rebake; material-region masks for plush vs plastic details;
+before/after atlas and map comparison; optional downstream Unity export
+chaining only after PBR validation.
