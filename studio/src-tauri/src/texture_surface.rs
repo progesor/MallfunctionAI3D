@@ -165,8 +165,16 @@ fn stage_repair(asset_dir:&Path,asset_id:&str,source:&[u8],source_sha:&str,
         let out_dir=dir.join("Textures");
         fs::create_dir(&out_dir).map_err(|e|e.to_string())?;
         for (role,image,overlay) in &processed{
-            let img=png_bytes(image)?;
-            fs::write(out_dir.join(format!("{role}.png")),&img).map_err(|e|e.to_string())?;
+            // Byte-identical for all roles not selected for healing,
+            // especially the original tangent-space NORMAL PNG.
+            let img=if overlay.is_some(){
+                png_bytes(image)?
+            }else{
+                fs::read(map_dir.join(format!("m0_{role}.png")))
+                    .map_err(|e|e.to_string())?
+            };
+            fs::write(out_dir.join(format!("{role}.png")),&img)
+                .map_err(|e|e.to_string())?;
             if let Some(mask)=overlay{
                 fs::write(dir.join(format!("{role}_ChangeMask.png")),png_bytes(mask)?)
                     .map_err(|e|e.to_string())?;

@@ -23,7 +23,9 @@ try{
       if($LASTEXITCODE -ne 0){throw 'Texture surface Playwright acceptance failed'}
     } finally{Pop-Location}
     & cargo test --manifest-path studio/src-tauri/Cargo.toml --lib texture_seam
-    if($LASTEXITCODE -ne 0){throw 'Rust texture seam unit tests failed'}
+    if($LASTEXITCODE -ne 0){throw 'Rust seam geometry/pixel tests failed'}
+    & cargo test --manifest-path studio/src-tauri/Cargo.toml --lib texture_surface
+    if($LASTEXITCODE -ne 0){throw 'Rust surface repair tests failed'}
     & cargo check --manifest-path studio/src-tauri/Cargo.toml
     if($LASTEXITCODE -ne 0){throw 'Rust/Tauri build check failed'}
     Write-Host 'Local M3 full suite PASS' -ForegroundColor Green
