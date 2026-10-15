@@ -38,6 +38,14 @@ async function openStudio(
           case 'list_unity_exports':return [];
           case 'list_asset_texture_exports':return ready?
             [{outputDir:'C:\\Test\\texture_exports\\pbr_1024',preset:'1024',generatedAt:'2026-10-15',mapCount:5}]:[];
+          case 'uv_engine_status':return {blenderReady:true,
+            xatlasReady:false,pythonVersion:'3.13',
+            pluginPath:'C:\\Test\\plugins\\xatlas',message:'Blender hazır; xatlas kurulu değil'};
+          case 'install_uv_xatlas':
+            calls.push({install:'xatlas'});
+            return {blenderReady:true,xatlasReady:true,pythonVersion:'3.13',
+              pluginPath:'C:\\Test\\plugins\\xatlas',
+              message:'Blender + xatlas 0.0.11 hazır'};
           case 'list_uv_repair_attempts':return recovery ? [{
             versionDir:'C:\\Test\\uv_repairs\\641e3869-4357-40dc-a543-bdce90bd3ece',
             profile:'preserve',resolution:recovery==='failed' ? 2048 : 1024,
@@ -114,7 +122,7 @@ test('one-click UV repair preserves existing source and exposes optional overrid
   await expect(page.getByText(/168 → 18/)).toBeVisible();
   const calls=await page.evaluate(()=>(window as unknown as {__repairCalls:unknown[]}).__repairCalls);
   expect(calls).toEqual([{assetId:asset.id,textureExportDir:'C:\\Test\\texture_exports\\pbr_1024',
-    preset:'plush',resolution:1024,seamAngle:78,weld:true,safeCleanup:true}]);
+    preset:'plush',resolution:1024,seamAngle:78,weld:true,safeCleanup:true,uvEngine:'both'}]);
   await expect(page.locator('.viewport-frame')).toBeVisible();
 });
 
@@ -179,4 +187,21 @@ test('failed 2048px bake is visible from 1024px default and can be saved as QA F
     const item=call as Record<string,unknown>;
     return !('assetId' in item);
   })).toBeTruthy();
+});
+
+test('xatlas engine can be installed through explicit Studio user click',async({page})=>{
+  await openStudio(page,true);
+  await expect(page.getByTestId('uv-engines')).toBeVisible();
+  await page.getByRole('combobox',{name:'UV Repair motor seçimi'}).selectOption('xatlas');
+  await expect(page.getByTestId('uv-repair-button')).toBeDisabled();
+  await page.getByTestId('uv-install-xatlas').click();
+  await expect(page.getByTestId('uv-install-xatlas')).toHaveCount(0);
+  await expect(page.getByTestId('uv-repair-button')).toBeEnabled();
+  const calls=await page.evaluate(()=>(window as unknown as {__repairCalls:unknown[]}).__repairCalls);
+  expect(calls).toEqual([{install:'xatlas'}]);
+});
+test('blender-only mode does not need native xatlas installed',async({page})=>{
+  await openStudio(page,true);
+  await page.getByRole('combobox',{name:'UV Repair motor seçimi'}).selectOption('blender');
+  await expect(page.getByTestId('uv-repair-button')).toBeEnabled();
 });

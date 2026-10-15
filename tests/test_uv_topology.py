@@ -82,16 +82,20 @@ class GeneralTopologyTests(unittest.TestCase):
             self.assertEqual(analysis["primitives"][0]["triangleCount"],1)
             self.assertEqual(analysis["primitives"][0]["status"],"AUDIT_OK")
 
-    def test_adapter_does_not_mutate_original_uv_or_mesh(self):
-        # General production adapter must use a new from_pydata mesh and
-        # restore original corner UVs and custom split normals per loop.
+    def test_uv_proxy_does_not_rewrite_source_normals_or_old_uv(self):
+        # The proxy is ONLY for UV charts; source render normals stay on
+        # the original imported mesh and are never copied through Blender's
+        # lossy normals_split_custom_set reconstruction.
         code=(B/"uv_topology_blender.py").read_text(encoding="utf-8")
         self.assertIn("bpy.data.meshes.new(",code)
-        self.assertIn("rebuilt.from_pydata(",code)
-        self.assertIn("normals_split_custom_set(",code)
-        self.assertIn("for old_name in original_uv_names",code)
-        self.assertIn("origin_attribute.data",code)
-        self.assertIn("target.data = rebuilt",code)
+        self.assertIn("proxy_mesh.from_pydata(",code)
+        self.assertIn("for name in original_uv_names",code)
+        self.assertIn("id_layer.data[i].value=fid",code)
+        self.assertIn("def transfer_clean_uv_from_proxy(",code)
+        self.assertIn("_normal_drift(source_normals,_normal_snapshot(rs))",code)
+        self.assertIn("return proxy_obj,{",code)
+        self.assertNotIn("target.data = rebuilt",code)
+        self.assertNotIn("normals_split_custom_set(",code)
         self.assertNotIn("bmesh.ops.remove_doubles(",code)
 
 

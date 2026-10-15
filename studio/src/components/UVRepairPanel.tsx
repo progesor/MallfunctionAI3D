@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Check, ChevronDown, Clipboard, Layers3, LoaderCircle, Wrench } from 'lucide-react';
 import { bridge } from '../lib/bridge';
-import type { Asset, TextureExportSummary, UvRepairResult, UvRepairPreset, RecoverableUvRepair } from '../lib/bridge';
+import type {
+  Asset, TextureExportSummary, UvRepairResult, UvRepairPreset,
+  RecoverableUvRepair, UvEngineMode, UvEngineStatus
+} from '../lib/bridge';
 
 interface Props {
   asset: Asset;
@@ -21,6 +24,9 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
   const [seamAngle,setSeamAngle] = useState(62);
   const [weld,setWeld] = useState(true);
   const [safeCleanup,setSafeCleanup] = useState(true);
+  const [uvEngine,setUvEngine] = useState<UvEngineMode>('both');
+  const [engineStatus,setEngineStatus] = useState<UvEngineStatus|null>(null);
+  const [installingXatlas,setInstallingXatlas] = useState(false);
   const [advanced,setAdvanced] = useState(false);
   const [result,setResult] = useState<UvRepairResult|null>(null);
   const [error,setError] = useState('');
@@ -28,6 +34,16 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
   const [chosenRecovery,setChosenRecovery] = useState('');
   const [approveOneImportFaceLoss,setApproveOneImportFaceLoss] = useState(false);
   const [acceptFailedQuality,setAcceptFailedQuality] = useState(false);
+
+  useEffect(()=>{
+    let alive=true;
+    void bridge.uvEngineStatus().then(status=>{
+      if(alive)setEngineStatus(status);
+    }).catch(err=>{
+      if(alive)setError('UV motorları denetlenemedi: '+String(err));
+    });
+    return ()=>{alive=false;};
+  },[]);
 
   useEffect(()=>{
     let alive=true;
@@ -57,11 +73,29 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[asset.id,revision]);
 
+  async function installXatlas() {
+    if(installingXatlas || busy)return;
+    setInstallingXatlas(true);
+    setError('');
+    try {
+      const status=await bridge.installUvXatlas();
+      setEngineStatus(status);
+      if(!status.xatlasReady) {
+        setError('xatlas kurulumu tamamlanamadı: '+status.message);
+      }
+    } catch(err) {
+      setError('xatlas kurulumu: '+String(err));
+    } finally {
+      setInstallingXatlas(false);
+    }
+  }
+
   async function run() {
     if (!selected || busy || !canRepair)return;
     setBusy(true);setError('');setResult(null);
     try {
-      const repaired=await bridge.repairUV(asset.id,selected,preset,resolution,seamAngle,weld,safeCleanup);
+      const repaired=await bridge.repairUV(
+        asset.id,selected,preset,resolution,seamAngle,weld,safeCleanup,uvEngine);
       if (!repaired.sourceUntouched || repaired.newIslands<1 ||
           repaired.newIslands>repaired.oldIslands ||
           repaired.asset.id===asset.id) {
@@ -129,7 +163,9 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
     catch {setError('Klasör yolu panoya kopyalanamadı.');}
   }
 
-  const enabled=canRepair && asset.materialCount===1 && !!selected && !loading && !busy;
+  const enabled=canRepair && asset.materialCount===1 && !!selected &&
+    !loading && !busy && !installingXatlas &&
+    (uvEngine!=='xatlas' || engineStatus?.xatlasReady===true);
   return <section className="uv-repair-panel" aria-label="Auto UV ve PBR Repair" data-testid="uv-repair-panel">
     <div className="card-heading"><div><Wrench size={16}/><strong>Auto UV + Texture Repair</strong></div></div>
     <p className="block-description">Tüm statik modeller için: UV dikişlerinde ayrılan
@@ -137,6 +173,32 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
       Blender ve kuruluysa isteğe bağlı xatlas UV adayları aynı kalite kapısından geçer.
       Uygun plan bulunamazsa <strong>5 PBR map bake edilmeden</strong>
       UV_Plan.json raporu hazırlanır. Orijinal mesh ve texture arşivi değişmez.</p>
+    <div className="uv-engine-status" data-testid="uv-engines">
+      <label className="unity-export-select"><span>UV MOTORU</span><div><select
+        aria-label="UV Repair motor seçimi" value={uvEngine}
+        disabled={busy||installingXatlas}
+        onChange={e=>setUvEngine(e.target.value as UvEngineMode)}>
+        <option value="both">Otomatik · Blender + xatlas (varsa)</option>
+        <option value="blender">Yalnız Blender Angle Unwrap</option>
+        <option value="xatlas">Yalnız xatlas (kurulum gerekli)</option>
+      </select><ChevronDown size={13}/></div></label>
+      <p className="block-description" role="status">
+        Blender: {engineStatus?.blenderReady===true?'hazır':'denetleniyor / yok'} ·
+        xatlas: {engineStatus?.xatlasReady===true?'hazır':'kurulu değil'}.
+        {engineStatus?.message&&' '+engineStatus.message}
+      </p>
+      {engineStatus?.blenderReady===true && engineStatus?.xatlasReady!==true&&
+        <button type="button" className="btn btn-outline btn-full"
+          data-testid="uv-install-xatlas"
+          disabled={installingXatlas || busy}
+          onClick={()=>void installXatlas()}>
+          {installingXatlas?<LoaderCircle className="spin" size={15}/>:<Layers3 size={15}/>}
+          {installingXatlas?'xatlas kuruluyor…':'xatlas 0.0.11 kur (Blender Python / PyPI)'}
+        </button>}
+      <small>Kurulum yalnız seçtiğin Studio kütüphanesinin plugins/xatlas
+        klasörüne yapılır; Blender sistem dosyaları değiştirilmez.
+        İndirmenin başlaması için bu düğmeye basman gerekir.</small>
+    </div>
     <label className="unity-export-select"><span>PBR KAYNAĞI</span><div><select
       aria-label="UV Repair PBR sürümü" value={selected} disabled={busy||loading}
       onChange={e=>{setSelected(e.target.value);setResult(null);}}>
@@ -232,6 +294,9 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
     {!versions.length&&!loading&&<p className="mini-disclaimer">Önce yukarıdan 5 PBR haritasını dışa aktar; ardından onarım tek işlemde çalışır.</p>}
     {asset.materialCount!==1&&<p className="mini-disclaimer">v1 yalnız tek materyalli statik ürünlerde çalışır.</p>}
     {!canRepair&&<p className="mini-disclaimer">LOD önizlemesinden SRC görünümüne dön.</p>}
+    {uvEngine==='xatlas' && engineStatus?.xatlasReady!==true&&
+      <p role="alert" className="mini-disclaimer">xatlas-only modunu
+        çalıştırmak için önce xatlas'ı kur ve durumun Hazır olduğunu doğrula.</p>}
     {busy&&<p role="status" className="texture-inspector-loading">İşlem 1–3 dakika veya daha uzun sürebilir. ComfyUI üretimi başlatılmaz.</p>}
     {error&&<div className="uv-repair-error">
       <p role="alert" className="unity-export-error">{error.split('\n')[0]}</p>

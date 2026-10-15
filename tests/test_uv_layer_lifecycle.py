@@ -180,7 +180,7 @@ class UVModeSwitchRegression(unittest.TestCase):
         self.assertEqual(report["seamAngleDeg"], 38)
         self.assertEqual(len(report["triedPlans"]), 5)
         self.assertEqual(report["selectionReason"],
-                         "lowest-p95-stretch-before-island-count")
+                         "islands-reduced-and-source-relative-stretch-passed")
         self.assertEqual(report["newUVIslands"], 12)
         self.assertGreaterEqual(target.data.generation, 3)
 
@@ -194,6 +194,17 @@ class UVModeSwitchRegression(unittest.TestCase):
         self.assertEqual(report["newUVIslands"], 80)
         self.assertEqual(len(report["triedPlans"]), 5)
         self.assertFalse(any(x.get("passesPreflight") for x in report["triedPlans"]))
+
+    def test_xatlas_only_does_not_invoke_blender_unwrap_when_missing(self):
+        target=Target()
+        fake=FakeBlender(target)
+        before_generation=target.data.generation
+        old,clean,report=fake.compile_new_uv()(target,62,24,1024,"xatlas")
+        self.assertEqual((old,clean),("UVMap","AI3D_Clean"))
+        self.assertFalse(report["accepted"])
+        self.assertEqual(report["triedPlans"],[])
+        self.assertEqual(target.data.generation,before_generation)
+        self.assertEqual(report["engineMode"],"xatlas")
 
     def test_new_atlas_uses_new_name_without_overwriting_existing(self):
         target = Target()

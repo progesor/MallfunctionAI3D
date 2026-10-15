@@ -688,7 +688,7 @@ fn finalize_repair(
 fn background_repair(
     asset_dir:PathBuf, file_path:PathBuf, source_sha:String, texture_version:String,
     blender:String, resolution:u32, angle:u32, preset:String,
-    weld:bool, safe_cleanup:bool,
+    weld:bool, safe_cleanup:bool,uv_engine:String,
 ) -> StudioResult<PreparedRepair> {
     verify_sha256(&file_path,&source_sha).map_err(|e|
         format!("Kaynak GLB doğrulanamadı: {}: {e}",file_path.display()))?;
@@ -759,6 +759,7 @@ fn background_repair(
         .arg("--weld").arg(if weld {"1"} else {"0"})
         .arg("--safe-cleanup").arg(if safe_cleanup {"1"} else {"0"})
         .arg("--preset").arg(&preset)
+        .arg("--uv-engine").arg(&uv_engine)
         .output().map_err(|e|format!(
             "Blender UV/PBR başlatılamadı. Executable: {}. Script: {}. OS: {e}",
             blender,worker.display()))?;
@@ -960,8 +961,11 @@ pub async fn save_uv_review(
 pub async fn repair_asset_uv(
     asset_id:String, texture_export_dir:String, preset:String,
     resolution:u32, seam_angle:u32, weld:bool, safe_cleanup:bool,
-    state:State<'_,StudioState>
+    uv_engine:String, state:State<'_,StudioState>
 ) -> StudioResult<UvRepairResult> {
+    if !matches!(uv_engine.as_str(),"both"|"blender"|"xatlas"){
+        return Err("UV engine must be both, blender or xatlas".into());
+    }
     if !matches!(preset.as_str(),"preserve"|"plush") {
         return Err("Yalnız preserve/plush onarım profili desteklenir".into());
     }
@@ -978,7 +982,7 @@ pub async fn repair_asset_uv(
     let original_path=PathBuf::from(&asset.file_path);
     let prepared=tauri::async_runtime::spawn_blocking(move ||
         background_repair(dir,original_path,sha,texture_export_dir,exe,resolution,seam_angle,
-                          preset.clone(),weld,safe_cleanup)
+                          preset.clone(),weld,safe_cleanup,uv_engine)
     ).await.map_err(|e|format!("UV Repair worker hatası: {e}"))??;
     register_repair(&state,&asset,prepared)
 }

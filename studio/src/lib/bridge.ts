@@ -60,6 +60,14 @@ export interface UnityExportResult {
 }
 export interface UnityExportSummary { outputDir: string; generatedAt: string; triangles: [number, number, number] }
 export type UvRepairPreset = 'preserve' | 'plush';
+export type UvEngineMode = 'both' | 'blender' | 'xatlas';
+export interface UvEngineStatus {
+  blenderReady: boolean;
+  xatlasReady: boolean;
+  pythonVersion: string | null;
+  pluginPath: string;
+  message: string;
+}
 export interface RecoverableUvRepair {
   versionDir: string;
   profile: UvRepairPreset;
@@ -157,8 +165,8 @@ export const bridge = {
   lodBinary: (assetId: string, index: number) => invoke<string>('blender_read_lod', { assetId, index }),
   repairUV: (assetId: string, textureExportDir: string, preset: UvRepairPreset,
     resolution: number, seamAngle: number, weld: boolean,
-    safeCleanup: boolean) => invoke<UvRepairResult>('repair_asset_uv', {
-    assetId, textureExportDir, preset, resolution, seamAngle, weld, safeCleanup,
+    safeCleanup: boolean, uvEngine: UvEngineMode) => invoke<UvRepairResult>('repair_asset_uv', {
+    assetId, textureExportDir, preset, resolution, seamAngle, weld, safeCleanup, uvEngine,
   }),
   uvRepairAttempts: (assetId: string) =>
     invoke<RecoverableUvRepair[]>('list_uv_repair_attempts', { assetId }),
@@ -176,6 +184,8 @@ export const bridge = {
     assetId, versionDir, textureExportDir, preset, resolution,
     approveOneImportFaceLoss, acceptFailedQuality,
   }),
+  uvEngineStatus: () => invoke<UvEngineStatus>('uv_engine_status'),
+  installUvXatlas: () => invoke<UvEngineStatus>('install_uv_xatlas'),
   blenderDetect: () => invoke<string | null>('blender_detect'),
   pickImage: () => open({ multiple: false, directory: false, filters: [{ name: 'Reference image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] }),
   pickGlb: () => open({ multiple: false, directory: false, filters: [{ name: 'glTF Binary', extensions: ['glb'] }] }),

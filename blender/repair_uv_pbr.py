@@ -43,7 +43,9 @@ from uv_texture_fidelity import (
 from uv_planner import (
     evaluate_plan, select_bake_candidate, select_diagnostic_candidate,
 )
-from uv_topology_blender import rebuild_exact_topology_work_copy
+from uv_topology_blender import (
+    make_topology_uv_proxy,transfer_clean_uv_from_proxy,
+)
 from uv_provider_xatlas import apply_xatlas_uv
 
 MAPS = ("baseColor", "normal", "metallic", "roughness", "occlusion")
@@ -64,6 +66,7 @@ def parse_args():
     parser.add_argument("--weld", type=int, choices=(0, 1), default=1)
     parser.add_argument("--safe-cleanup", type=int, choices=(0, 1), default=1)
     parser.add_argument("--preset", choices=("preserve", "plush"), default="preserve")
+    parser.add_argument("--uv-engine", choices=("both","blender","xatlas"),default="both")
     return parser.parse_args(sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else [])
 
 
@@ -241,7 +244,7 @@ def mark_curvature_seams(mesh, threshold_degrees):
         bm.free()
 
 
-def new_uv(target, angle, margin_px, resolution):
+def new_uv(target, angle, margin_px, resolution, engine_mode="both"):
     """Try multiple seam plans and choose lowest UV stretch, not island count."""
     mesh = target.data
     original = mesh.uv_layers.active
@@ -318,7 +321,7 @@ def new_uv(target, angle, margin_px, resolution):
     provider_status = {"engine": "xatlas", "available": False,
                        "reason": "Optional module not installed"}
     xatlas_uv_snapshot = None
-    for threshold in angles:
+    for threshold in (angles if engine_mode in ("both","blender") else []):
         try:
             candidate = unwrap_threshold(threshold)
         except Exception as exc:
@@ -338,7 +341,12 @@ def new_uv(target, angle, margin_px, resolution):
     # No network/pip install occurs during a bake; if the Blender Python
     # module is missing, the normal Blender candidates still run.
     try:
-        provider_status = apply_xatlas_uv(target.data, clean_name)
+        provider_status = (
+            apply_xatlas_uv(target.data, clean_name)
+            if engine_mode in ("both","xatlas") else
+            {"engine":"xatlas","available":False,
+             "reason":"Disabled by user-selected Blender-only mode"}
+        )
         if provider_status["available"]:
             live = target.data.uv_layers.get(clean_name)
             xatlas_uv_snapshot = [
@@ -416,6 +424,7 @@ def new_uv(target, angle, margin_px, resolution):
             "rebuiltStretch": winner["rebuiltStretch"],
             "stretchGate": winner["stretchGate"],
             "providerStatus": provider_status,
+            "engineMode":engine_mode,
             "triedPlans": attempted,
             "selectionReason": "islands-reduced-and-source-relative-stretch-passed",
         }
@@ -448,6 +457,7 @@ def new_uv(target, angle, margin_px, resolution):
                   "No candidate both reduced islands and preserved UV stretch",
         "diagnosticOnly": True,
         "providerStatus": provider_status,
+        "engineMode":engine_mode,
         "warning": "No Cycles bake; no Smart UV fallback; source unchanged",
     }
 
@@ -962,49 +972,67 @@ def main():
         stage("safe_mesh_cleanup")
         cleanup_report = remove_orphan_geometry_only(target)
     welded = 0
+    proxy = None
     weld_diagnostics = {
-        "requested": bool(args.weld), "applied": False,
-        "weldedVertices": 0, "reason": "disabled",
+        "requested":bool(args.weld),"applied":False,
+        "weldedVertices":0,"reason":"disabled",
+        "renderMeshUntouched":True,
     }
-    # Keep a safe baseline and RECORD failures; previous releases silently
-    # ignored rejected welds, leaving thousands of disconnected mesh islands.
+    # Source GLB normals can disagree with polygon winding. Never replace
+    # the actual PBR render mesh simply to create connected UV charts.
+    # The proxy is used ONLY for UV planning, never for final PBR shading.
     if args.weld:
-        stage("rebuild_exact_topology")
+        stage("build_uv_topology_proxy")
         try:
-            weld_diagnostics = rebuild_exact_topology_work_copy(
-                target, REFERENCE_FACE_ID)
-            welded = int(weld_diagnostics["weldedVertices"])
+            proxy,weld_diagnostics=make_topology_uv_proxy(target,REFERENCE_FACE_ID)
+            welded=int(weld_diagnostics["weldedVertices"])
         except Exception as exc:
-            # A failure to recover connectivity is a geometry preflight
-            # failure. Never mask it with a 1733-island Smart UV retry.
-            weld_diagnostics["reason"] = "topology-rebuild-rejected: " + str(exc)
-            no_weld_report = {
-                "schemaVersion": 2, "sourceUntouched": True,
-                "acceptedForBake": False,
-                "weld": weld_diagnostics,
-                "sourceTriangleCountInBlender": before_triangles,
-                "sourceMeshHealth": original_health,
-                "sourceFormat": "static-triangulated",
+            weld_diagnostics["reason"]="uv-proxy-rejected: "+str(exc)
+            failure={
+                "schemaVersion":3,"sourceUntouched":True,
+                "acceptedForBake":False,"weld":weld_diagnostics,
+                "sourceTriangleCountInBlender":before_triangles,
+                "sourceMeshHealth":original_health,
+                "sourceFormat":"static-triangulated",
             }
-            (output / "UV_Plan.json").write_text(
-                json.dumps(no_weld_report, ensure_ascii=False, indent=2)+"\n",
+            (output/"UV_Plan.json").write_text(
+                json.dumps(failure,ensure_ascii=False,indent=2)+"\n",
                 encoding="utf-8")
-            print("AI3D_UV_PREFLIGHT:TOPOLOGY_REJECTED", flush=True)
+            print("AI3D_UV_PREFLIGHT:PROXY_REJECTED",flush=True)
             raise RuntimeError(
-                "UV_PREFLIGHT_REJECTED: Exact topology rebuild could not "
-                "preserve UV/normal data. 0/5 PBR bakes run. Details: {}. "
-                "Original GLB untouched.".format(output / "UV_Plan.json"))
+                "UV_PREFLIGHT_REJECTED: Connected UV planning proxy "
+                "could not preserve source positions/UV face identities: {}. "
+                "0/5 PBR maps baked. Source normals remain untouched.".format(
+                    output/"UV_Plan.json"))
+    uv_object=proxy if proxy is not None else target
     stage("auto_unwrap")
-    old_uv, new_uv_name, uv_report = new_uv(target, args.angle, args.margin, args.resolution)
+    old_uv,proxy_uv_name,uv_report=new_uv(
+        uv_object,args.angle,args.margin,args.resolution,args.uv_engine)
+    uv_transfer={
+        "sourceRenderNormalsKept":True,
+        "renderMeshUntouched":True,
+        "proxyNotUsedForPbr":True,
+    }
+    if proxy is not None and uv_report["accepted"]:
+        stage("transfer_proxy_uv_to_render_mesh")
+        uv_transfer=transfer_clean_uv_from_proxy(
+            proxy,target,REFERENCE_FACE_ID,proxy_uv_name)
+        new_uv_name=uv_transfer["renderUVLayer"]
+        proxy.hide_set(True)
+    else:
+        new_uv_name=proxy_uv_name
     preflight = {
         "schemaVersion": 1, "sourceUntouched": True,
         "acceptedForBake": bool(uv_report["accepted"]),
         "uv": uv_report,
         "weld": weld_diagnostics,
+        "engineMode": args.uv_engine,
         "sourceTriangleCountInBlender": before_triangles,
         "sourceMeshHealth": original_health,
-        "workingMeshHealth": mesh_health(target.data),
-        "safeCleanup": cleanup_report,
+        "workingMeshHealth":mesh_health(uv_object.data),
+        "renderMeshHealth":mesh_health(target.data),
+        "safeCleanup":cleanup_report,
+        "uvTransfer":uv_transfer,
     }
     (output / "UV_Plan.json").write_text(
         json.dumps(preflight, ensure_ascii=False, indent=2) + "\n",
@@ -1014,9 +1042,9 @@ def main():
         uv_report["oldUVIslands"], uv_report["newUVIslands"]), flush=True)
     if not uv_report["accepted"]:
         stage("uv_preflight_rejected")
-        emit_uv_layout(target.data, new_uv_name, output / "UV_Layout.svg")
-        emit_uv_stress_layout(target.data, new_uv_name,
-                              output / "UV_Stress.svg")
+        emit_uv_layout(uv_object.data,proxy_uv_name,output/"UV_Layout.svg")
+        emit_uv_stress_layout(uv_object.data,proxy_uv_name,
+                              output/"UV_Stress.svg")
         bpy.ops.wm.save_as_mainfile(filepath=str(output / "UV_Plan_Working.blend"))
         raise RuntimeError(
             "UV_PREFLIGHT_REJECTED: No candidate reduces UV islands AND "
@@ -1079,9 +1107,9 @@ def main():
         (output / "Texture_Quality.json").write_text(
             json.dumps(quality, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8")
-        emit_uv_stress_layout(target.data, new_uv_name,
-                              output / "UV_Stress.svg")
-        emit_uv_layout(target.data, new_uv_name, output / "UV_Layout.svg")
+        emit_uv_stress_layout(uv_object.data,proxy_uv_name,
+                              output/"UV_Stress.svg")
+        emit_uv_layout(uv_object.data,proxy_uv_name,output/"UV_Layout.svg")
         # The new UV is first/active for glTF export. The old UV remains
         # available in the working blend for seam edits and comparisons.
         target.data.uv_layers.active = target.data.uv_layers[new_uv_name]
@@ -1119,7 +1147,9 @@ def main():
             "textureFidelity": quality,
             "meshHealth": {"source": original_health,
                            "repairedWorking": repaired_health,
+                           "topologyPlanningProxy":mesh_health(uv_object.data),
                            "safeCleanup": cleanup_report},
+            "uvTransfer":uv_transfer,
             "profile": args.preset,
             "heightBaked": False,
             "manualEditBlend": "Repair_Working.blend",

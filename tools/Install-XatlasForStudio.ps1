@@ -1,6 +1,6 @@
-# OPTIONAL explicit xatlas native-Python provider installation for Studio.
-# Does not alter Blender's system site-packages, ComfyUI, Rust or Unity.
-# Requires the user to supply the Blender 5.1 bundled Python executable.
+# Optional app-scoped xatlas 0.0.11 installer — same verified wheel engine as Studio UI.
+# Requires no pip; downloads a pinned cp313 win_amd64 wheel from PyPI,
+# verifies PyPI SHA256 and unpacks only to the user's Studio library.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$BlenderPython,
@@ -8,22 +8,24 @@ param(
 )
 $ErrorActionPreference='Stop'
 if (-not (Test-Path -LiteralPath $BlenderPython -PathType Leaf)) {
-    throw "Blender Python not found: $BlenderPython"
+    throw "Blender Python missing: $BlenderPython"
 }
 $version=(& $BlenderPython --version 2>&1) -join ' '
 if ($LASTEXITCODE -ne 0 -or $version -notmatch 'Python 3\.13\.') {
-    throw "Expected Blender 5.1 Python 3.13 (xatlas win_amd64 wheel): $version"
+    throw "Blender 5.1 Python 3.13 needed for xatlas cp313 wheel: $version"
 }
-$dir=Join-Path $LibraryRoot 'plugins\xatlas'
-New-Item -ItemType Directory -Force -Path $dir | Out-Null
-Write-Host "Installing optional MIT-licensed xatlas==0.0.11 only to $dir" -ForegroundColor Cyan
-& $BlenderPython -m pip install --disable-pip-version-check --no-deps --only-binary=:all: --target $dir --upgrade 'xatlas==0.0.11'
+$worker=Join-Path $PSScriptRoot '..\blender\install_xatlas_wheel.py'
+if (-not (Test-Path -LiteralPath $worker -PathType Leaf)) {
+    throw "Missing pinned xatlas installer script: $worker"
+}
+& $BlenderPython -I $worker $LibraryRoot
 if ($LASTEXITCODE -ne 0) {
-    throw "Blender Python pip failed. Python may not have pip installed. No Studio file was modified."
+    throw "xatlas installation failed; source GLB and Blender site-packages unchanged."
 }
-$probe='import sys; sys.path.insert(0,sys.argv[1]); import xatlas; print("xatlas optional provider available")'
-& $BlenderPython -c $probe $dir
+$installed=Join-Path $LibraryRoot 'plugins\xatlas'
+$probe='import sys;sys.path.insert(0,sys.argv[1]);import xatlas,numpy;print("XATLAS_IMPORT_OK")'
+& $BlenderPython -c $probe $installed
 if ($LASTEXITCODE -ne 0) {
-    throw "xatlas wheel cannot be imported by Blender Python. Stop; Studio built-in Blender UV engine still works."
+    throw "xatlas installed but cannot be imported by Blender Python."
 }
-Write-Host 'Installed app-scoped xatlas provider. Restart Studio; do not regenerate ComfyUI assets.' -ForegroundColor Green
+Write-Host "Blender + xatlas 0.0.11 ready (Studio owned plugin only)" -ForegroundColor Green

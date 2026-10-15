@@ -7,6 +7,7 @@ mod texture_export;
 mod unity_export;
 mod unity_native;
 mod uv_repair;
+mod uv_engines;
 mod uv_triangle_audit;
 
 use tauri::Manager;
@@ -37,6 +38,8 @@ pub fn run() {
             uv_repair::list_uv_repair_attempts,
             uv_repair::resume_uv_repair,
             uv_repair::save_uv_review,
+            uv_engines::uv_engine_status,
+            uv_engines::install_uv_xatlas,
             commands::read_reference_preview,
             commands::move_asset_to_trash,
             commands::get_asset_manifest,
