@@ -6,13 +6,24 @@ may contribute one quality-scored candidate to the same strict pre-bake gate.
 The user source GLB and original face/UV IDs remain unchanged.
 """
 import math
+import os
+from pathlib import Path
 
 
 def apply_xatlas_uv(mesh, clean_uv_name):
+    plugin_root=os.environ.get("AI3D_XATLAS_PLUGIN_PATH")
+    if not plugin_root:
+        return {"available":False,"reason":"App-owned xatlas plugin not installed",
+                "engine":"xatlas","accepted":False}
     try:
         import xatlas
         import numpy as np
-    except (ImportError, OSError) as exc:
+        native=Path(xatlas.__file__).resolve()
+        allowed=Path(plugin_root).resolve()
+        if not native.is_relative_to(allowed):
+            return {"available":False,"engine":"xatlas","accepted":False,
+                    "reason":"xatlas native extension not from Studio plugin folder"}
+    except (ImportError, OSError, AttributeError, TypeError) as exc:
         return {"available": False, "reason": str(exc),
                 "engine": "xatlas", "accepted": False}
     if not mesh.polygons or not mesh.vertices:

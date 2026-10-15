@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import patch
 import importlib.util
+import os
 import sys
 import unittest
 
@@ -42,6 +43,15 @@ class TriangleMesh:
 
 @unittest.skipIf(np is None,"Blender-bundled numpy / local numpy unavailable")
 class XatlasProviderContract(unittest.TestCase):
+    def setUp(self):
+        self.previous=os.environ.get("AI3D_XATLAS_PLUGIN_PATH")
+        os.environ["AI3D_XATLAS_PLUGIN_PATH"]=str(ROOT)
+    def tearDown(self):
+        if self.previous is None:
+            os.environ.pop("AI3D_XATLAS_PLUGIN_PATH",None)
+        else:
+            os.environ["AI3D_XATLAS_PLUGIN_PATH"]=self.previous
+
     def test_identity_chart_mapping_restores_all_face_corner_uv(self):
         mesh=TriangleMesh()
         def parametrize(vertices,faces):
@@ -49,7 +59,8 @@ class XatlasProviderContract(unittest.TestCase):
             return (np.arange(len(vertices),dtype=np.uint32),
                     faces.copy(),vertices[:,0:2].copy())
         with patch.dict(sys.modules,{'xatlas':NS(parametrize=parametrize,
-                                                   __version__='mock')}):
+                                                   __version__='mock',
+                                                   __file__=str(ROOT/"xatlas.cp313-win_amd64.pyd"))}):
             result=apply_xatlas_uv(mesh,'AI3D_Clean')
         self.assertTrue(result["available"])
         self.assertEqual(result["triangles"],2)
@@ -63,10 +74,21 @@ class XatlasProviderContract(unittest.TestCase):
         def invalid(vertices,faces):
             return (np.arange(len(vertices),dtype=np.uint32),
                     faces[::-1].copy(),vertices[:,0:2].copy())
-        with patch.dict(sys.modules,{'xatlas':NS(parametrize=invalid)}):
+        with patch.dict(sys.modules,{'xatlas':NS(parametrize=invalid,
+                                                   __file__=str(ROOT/"xatlas.cp313-win_amd64.pyd"))}):
             with self.assertRaisesRegex(ValueError,"triangle identity/order"):
                 apply_xatlas_uv(mesh,'AI3D_Clean')
         self.assertEqual(tuple(mesh.uv_layers.layer.data[0].uv),(-2.,-2.))
+
+    def test_untrusted_global_xatlas_is_not_selected(self):
+        mesh=TriangleMesh()
+        with patch.dict(sys.modules,{'xatlas':NS(
+            parametrize=lambda *args: None,
+            __file__=str(ROOT.parent/"unmanaged"/"xatlas.pyd")
+        )}):
+            status=apply_xatlas_uv(mesh,'AI3D_Clean')
+        self.assertFalse(status["available"])
+        self.assertIn("not from Studio plugin folder",status["reason"])
 
     def test_python_native_wheel_is_not_installed_automatically(self):
         code=(ROOT/"uv_provider_xatlas.py").read_text(encoding="utf-8")
@@ -74,6 +96,8 @@ class XatlasProviderContract(unittest.TestCase):
         self.assertNotIn("subprocess",code)
         self.assertIn("import xatlas",code)
         self.assertIn("set(mesh_vertices) != set(assigned_vertices)",code)
+        self.assertIn("AI3D_XATLAS_PLUGIN_PATH",code)
+        self.assertIn("not native.is_relative_to(allowed)",code)
 
 
 if __name__=="__main__":

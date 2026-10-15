@@ -899,6 +899,7 @@ def main():
     # Blender 5.1 disables user-site packages, so only the app's
     # documented opt-in directory is added. No implicit downloads.
     library_root = output.parents[3] if len(output.parents) >= 4 else None
+    os.environ.pop("AI3D_XATLAS_PLUGIN_PATH",None)
     if library_root is not None:
         plugin_dir = library_root / "plugins" / "xatlas"
         if plugin_dir.is_dir():
@@ -907,6 +908,7 @@ def main():
                 plugin_native = plugin_native[4:]
             if plugin_native not in sys.path:
                 sys.path.insert(0, plugin_native)
+            os.environ["AI3D_XATLAS_PLUGIN_PATH"]=plugin_native
     if not output.is_dir():
         raise ValueError("Output version directory must already exist")
     if output in source_path.parents or source_path in output.parents:

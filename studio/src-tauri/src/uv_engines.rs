@@ -21,7 +21,11 @@ pub struct UvEngineStatus {
 const PINNED_XATLAS:&str="xatlas==0.0.11";
 const INSTALLER_SCRIPT:&str=include_str!("../../../blender/install_xatlas_wheel.py");
 const XATLAS_PROBE:&str=
-    "import sys;sys.path.insert(0,sys.argv[1]);import xatlas,numpy;print('XATLAS_IMPORT_OK')";
+    "import sys,pathlib;sys.path.insert(0,sys.argv[1]);import xatlas,numpy;\
+     root=pathlib.Path(sys.argv[1]).resolve();\
+     native=pathlib.Path(xatlas.__file__).resolve();\
+     print('XATLAS_IMPORT_OK' if native.is_relative_to(root) \
+           and hasattr(xatlas,'parametrize') else 'XATLAS_WRONG_ORIGIN')";
 
 fn blender_python(exe:&Path)->StudioResult<PathBuf>{
     let parent=exe.parent().ok_or("Blender executable folder invalid")?;
