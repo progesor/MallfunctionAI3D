@@ -2,6 +2,10 @@
 import sys
 from pathlib import Path
 import unittest
+import importlib.util
+import json
+import struct
+import tempfile
 
 B=Path(__file__).resolve().parents[1]/"blender"
 if str(B) not in sys.path:
@@ -50,6 +54,33 @@ class GeneralTopologyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"position"):
             exact_topology_plan([(float('nan'),0,0)] + verts[1:],
                                 [(0,1,2)])
+
+    def test_read_only_cli_handles_minimal_triangle_glb(self):
+        tool=Path(__file__).resolve().parents[1]/"tools"/"inspect_glb_topology.py"
+        spec=importlib.util.spec_from_file_location("topology_cli",tool)
+        module=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        vertex=struct.pack("<9f",0.,0.,0.,1.,0.,0.,0.,1.,0.)
+        indices=struct.pack("<3H",0,1,2)+b"\x00\x00"
+        binary=vertex+indices
+        doc={"asset":{"version":"2.0"},"buffers":[{"byteLength":len(binary)}],
+             "bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},
+                            {"buffer":0,"byteOffset":36,"byteLength":6}],
+             "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},
+                          {"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}],
+             "meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1}]}]}
+        j=json.dumps(doc,separators=(",",":")).encode("utf-8")
+        j+=b" "*((-len(j))%4)
+        total=12+8+len(j)+8+len(binary)
+        glb=(b"glTF"+struct.pack("<II",2,total)+
+             struct.pack("<I4s",len(j),b"JSON")+j+
+             struct.pack("<I4s",len(binary),b"BIN\x00")+binary)
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/"triangle.glb"
+            path.write_bytes(glb)
+            analysis=module.analyze_glb(path)
+            self.assertEqual(analysis["primitives"][0]["triangleCount"],1)
+            self.assertEqual(analysis["primitives"][0]["status"],"AUDIT_OK")
 
     def test_adapter_does_not_mutate_original_uv_or_mesh(self):
         # General production adapter must use a new from_pydata mesh and
