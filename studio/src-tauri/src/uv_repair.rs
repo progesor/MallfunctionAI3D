@@ -222,26 +222,39 @@ fn read_blender_result(version:&Path, exit_success:bool, exit_code:Option<i32>, 
 /// Validate the Blender report without silently accepting topology changes.
 /// Keep exact observed values in the UI error so a completed five-map bake
 /// can be diagnosed from its existing Repair_Report.json without rerunning it.
+/// Acceptance does not confuse an import-time difference with UV mesh loss.
+/// Redundant faces are proven from the source accessor bytes (same oriented
+/// indices within a primitive). An otherwise unexplained single missing face
+/// may be accepted ONLY by an explicit opt-in on a completed old bake; it
+/// remains flagged as an import-time loss in the immutable manifest.
 fn verify_repair_report(
-    report:&Value, audit:&SourceTriangles, version:&Path
-) -> StudioResult<(u64,u64,u64)> {
+    report:&Value, audit:&SourceTriangles, version:&Path,
+    approve_one_import_face_loss:bool,
+) -> StudioResult<(u64,u64,u64,&'static str)> {
     let untouched=report.get("sourceUntouched").and_then(Value::as_bool);
     let before=report.get("trianglesBefore").and_then(Value::as_u64);
     let after=report.get("trianglesAfter").and_then(Value::as_u64);
     let old=report.pointer("/uv/oldUVIslands").and_then(Value::as_u64);
     let new=report.pointer("/uv/newUVIslands").and_then(Value::as_u64);
-    let mut failures=Vec::new();
-    if untouched!=Some(true) {failures.push("sourceUntouched != true");}
     let accepted=match before {
-        Some(n) if n==audit.declared=>Some(n),
-        Some(n) if audit.zero_area>0 && n==audit.effective=>Some(n),
+        Some(n) if n==audit.declared=>Some((n,"exact-source-match")),
+        Some(n) if (audit.zero_area>0 || audit.duplicate_faces>0) &&
+            n==audit.effective=>Some((n,"audited-redundant-source-face")),
+        Some(n) if approve_one_import_face_loss && n>0 &&
+            audit.zero_area==0 && audit.duplicate_faces==0 &&
+            audit.declared.checked_sub(n)==Some(1)=>
+            Some((n,"explicit-user-approved-one-import-face-loss")),
         _=>None,
     };
+    let mut failures=Vec::new();
+    if untouched!=Some(true) {failures.push("sourceUntouched != true");}
     if accepted.is_none() {
-        failures.push("Blender input triangle count cannot be explained by audited source geometry");
+        failures.push("Blender import triangle count is not explained by source audit; explicit one-face review may be required");
     }
-    if accepted!=after {
-        failures.push("Blender changed triangle count DURING UV repair");
+    // IMPORTANT: Compare before and after directly. Earlier builds used
+    // accepted!=after, spuriously reporting UV loss when accepted=None.
+    if before!=after || before.is_none() {
+        failures.push("Blender actually changed triangle count DURING UV repair");
     }
     if old.is_none() {failures.push("uv.oldUVIslands missing or not an integer");}
     if new.is_none() {failures.push("uv.newUVIslands missing or not an integer");}
@@ -252,18 +265,19 @@ fn verify_repair_report(
     }
     if !failures.is_empty() {
         return Err(format!(
-            "UV/PBR kabul kontrolü: {}. Kaynak GLB indeks üçgeni={}; \
-             doğrulanmış sıfır-alan üçgeni={}; kalan geçerli={}; \
-             Blender before={before:?}, after={after:?}; \
-             sourceUntouched={untouched:?}, UV old={old:?}, new={new:?}. \
-             Sadece kaynağın GERÇEK indeks/konum verilerinden kanıtlanan \
-             sıfır alanlı üçgenler hariç tutulabilir; kör tolerans uygulanmadı. \
-             Rapor: {}. Gerekirse kaynak original.glb dosyasını paylaş.",
-            failures.join("; "),audit.declared,audit.zero_area,audit.effective,
+            "UV/PBR kabul kontrolü: {}. Kaynak indeks üçgeni={}; \
+             doğrulanmış sıfır alanlı={}; yinelenen aynı yüz={}; \
+             audit sonrası kalan={}; Blender import before={before:?}, \
+             UV sonrası after={after:?}; UV old={old:?} new={new:?}. \
+             Tek üçgenlik açık onay yalnızca tamamlanmış bir bake kurtarılırken \
+             geçerlidir; kaynak GLB değiştirilmez. Rapor: {}.",
+            failures.join("; "),audit.declared,audit.zero_area,
+            audit.duplicate_faces,audit.effective,
             version.join("Repair_Report.json").display()
         ));
     }
-    Ok((old.unwrap(),new.unwrap(),accepted.unwrap()))
+    let (tris,reason)=accepted.expect("accepted checked");
+    Ok((old.unwrap(),new.unwrap(),tris,reason))
 }
 
 
@@ -272,6 +286,7 @@ fn verify_repair_report(
 fn finalize_repair(
     asset_dir:&Path, file_path:&Path, source_sha:&str,
     texture_version:&str, version:&Path, preset:&str, resolution:u32,
+    approve_one_import_face_loss:bool,
 ) -> StudioResult<PreparedRepair> {
     let base=asset_dir.join("uv_repairs").canonicalize()
         .map_err(|e|format!("UV onarım arşivi bulunamadı: {e}"))?;
@@ -344,8 +359,8 @@ fn finalize_repair(
     if audit.declared!=declared{
         return Err(format!("GLB triangle audit mismatch: {} vs {declared}",audit.declared));
     }
-    let (old_islands,new_islands,accepted_triangles)=
-        verify_repair_report(&report,&audit,&folder)?;
+    let (old_islands,new_islands,accepted_triangles,geometry_policy)=
+        verify_repair_report(&report,&audit,&folder,approve_one_import_face_loss)?;
     let (_,base_color)=read_baked_png(&folder,"baseColor",resolution)?;
     let (_,normal)=read_baked_png(&folder,"normal",resolution)?;
     let (metal,_)=read_baked_png(&folder,"metallic",resolution)?;
@@ -414,7 +429,11 @@ fn finalize_repair(
         "sourceUntouched":true,
         "sourceDeclaredTriangles":audit.declared,
         "sourceZeroAreaTriangles":audit.zero_area,
+        "sourceDuplicateFaces":audit.duplicate_faces,
         "blenderAcceptedTriangles":accepted_triangles,
+        "sourceImportTriangleDelta":audit.declared-accepted_triangles,
+        "geometryAcceptancePolicy":geometry_policy,
+        "explicitOneFaceImportLossApproval":geometry_policy=="explicit-user-approved-one-import-face-loss",
         "uv":{"oldIslands":old_islands,"newIslands":new_islands},
         "textureRoles":["baseColor","normal","metallic","roughness","occlusion"],
         "outputResolution":resolution,"preset":preset,
@@ -491,7 +510,7 @@ fn background_repair(
     // The worker has finished; exact validations and packing are also reused
     // by the no-bake recovery path.
     finalize_repair(&asset_dir,&file_path,&source_sha,&texture_version,
-                    &version,&preset,resolution)
+                    &version,&preset,resolution,false)
 }
 
 fn register_repair(
@@ -598,7 +617,8 @@ pub fn list_uv_repair_attempts(
 #[tauri::command]
 pub async fn resume_uv_repair(
     asset_id:String, version_dir:String, texture_export_dir:String,
-    preset:String, resolution:u32, state:State<'_,StudioState>
+    preset:String, resolution:u32, approve_one_import_face_loss:bool,
+    state:State<'_,StudioState>
 ) -> StudioResult<UvRepairResult> {
     if !matches!(preset.as_str(),"preserve"|"plush") ||
        !matches!(resolution,512|1024|2048) {
@@ -613,7 +633,7 @@ pub async fn resume_uv_repair(
     let source_sha=asset.sha256.clone();
     let prepared=tauri::async_runtime::spawn_blocking(move ||
         finalize_repair(&dir,&original,&source_sha,&texture_export_dir,
-                        Path::new(&version_dir),&preset,resolution)
+                        Path::new(&version_dir),&preset,resolution,approve_one_import_face_loss)
     ).await.map_err(|e|format!("UV kurtarma görevi başarısız: {e}"))??;
     register_repair(&state,&asset,prepared)
 }
@@ -663,33 +683,49 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]fn strict_report_allows_only_proven_zero_area_source_face() {
+    #[test]fn triangle_acceptance_distinguishes_pre_import_from_in_repair_loss() {
         let path=Path::new("example/uv_repairs/uuid");
-        let expected=SourceTriangles{declared:7994,zero_area:1,effective:7993};
         let fox=json!({"sourceUntouched":true,"trianglesBefore":7993,
             "trianglesAfter":7993,"uv":{"oldUVIslands":254,"newUVIslands":116}});
-        assert_eq!(verify_repair_report(&fox,&expected,path).unwrap(),(254,116,7993));
-        let no_proof=SourceTriangles{declared:7994,zero_area:0,effective:7994};
-        let err=verify_repair_report(&fox,&no_proof,path).unwrap_err();
-        assert!(err.contains("Kaynak GLB indeks üçgeni=7994"));
-        assert!(err.contains("doğrulanmış sıfır-alan üçgeni=0"));
-        let lost_during=json!({"sourceUntouched":true,"trianglesBefore":7994,
+        let no_proof=SourceTriangles{
+            declared:7994,zero_area:0,duplicate_faces:0,effective:7994
+        };
+        let err=verify_repair_report(&fox,&no_proof,path,false).unwrap_err();
+        assert!(err.contains("Kaynak indeks üçgeni=7994"));
+        assert!(err.contains("yinelenen aynı yüz=0"));
+        assert!(!err.contains("actually changed triangle count DURING UV repair"));
+        // Human explicitly reviewed the visually intact one-face import loss;
+        // this permission applies ONLY to a resume call and is permanently
+        // recorded in the repair manifest.
+        assert_eq!(
+            verify_repair_report(&fox,&no_proof,path,true).unwrap(),
+            (254,116,7993,"explicit-user-approved-one-import-face-loss")
+        );
+        let duplicate=SourceTriangles{
+            declared:7994,zero_area:0,duplicate_faces:1,effective:7993
+        };
+        assert_eq!(
+            verify_repair_report(&fox,&duplicate,path,false).unwrap(),
+            (254,116,7993,"audited-redundant-source-face")
+        );
+        let zero=SourceTriangles{
+            declared:7994,zero_area:1,duplicate_faces:0,effective:7993
+        };
+        assert_eq!(
+            verify_repair_report(&fox,&zero,path,false).unwrap().2,7993
+        );
+        let actual_loss=json!({"sourceUntouched":true,"trianglesBefore":7994,
             "trianglesAfter":7993,"uv":{"oldUVIslands":254,"newUVIslands":116}});
-        assert!(verify_repair_report(&lost_during,&expected,path).unwrap_err()
-            .contains("DURING UV repair"));
-        let missing=json!({"sourceUntouched":true,"trianglesBefore":7993,
-            "trianglesAfter":7993,"uv":{"oldUVIslands":254}});
-        assert!(verify_repair_report(&missing,&expected,path).unwrap_err()
-            .contains("newUVIslands missing"));
-        let worse=json!({"sourceUntouched":true,"trianglesBefore":7993,
-            "trianglesAfter":7993,"uv":{"oldUVIslands":13,"newUVIslands":40}});
-        assert!(verify_repair_report(&worse,&expected,path).unwrap_err()
-            .contains("greater than source"));
-        let full=json!({"sourceUntouched":true,"trianglesBefore":7994,
-            "trianglesAfter":7994,"uv":{"oldUVIslands":254,"newUVIslands":116}});
-        assert_eq!(verify_repair_report(&full,&expected,path).unwrap().2,7994);
+        assert!(verify_repair_report(&actual_loss,&no_proof,path,true)
+            .unwrap_err().contains("actually changed triangle count DURING UV repair"));
+        let two_lost=json!({"sourceUntouched":true,"trianglesBefore":7992,
+            "trianglesAfter":7992,"uv":{"oldUVIslands":254,"newUVIslands":116}});
+        assert!(verify_repair_report(&two_lost,&no_proof,path,true).is_err());
+        let invalid_uv=json!({"sourceUntouched":true,"trianglesBefore":7993,
+            "trianglesAfter":7993,"uv":{"oldUVIslands":116,"newUVIslands":254}});
+        assert!(verify_repair_report(&invalid_uv,&no_proof,path,true)
+            .unwrap_err().contains("greater than source count"));
     }
-
     #[test]fn orm_preserves_gltf_semantics_and_plush_cleanup() {
         let metal=RgbaImage::from_pixel(1,1,Rgba([150,150,150,255]));
         let rough=RgbaImage::from_pixel(1,1,Rgba([35,35,35,255]));

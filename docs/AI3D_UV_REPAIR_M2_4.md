@@ -270,3 +270,46 @@ Offline local checks (CI stays manual-only):
 Real Blender/Unity acceptance still pending. Source GLB bytes are not
 available in the assistant environment, so the proof of a zero-area
 source face must be established on the user's Windows machine.
+
+## 2026-10-15 · Fox completed bake, duplicate-face audit & explicit one-face approval
+
+The uploaded Blender 5.1.2 Repair_Run.log confirms no Python/bake/export
+exception: BaseColor, Normal, Metallic, Roughness and Occlusion baked,
+Repair_Working.blend saved, geometry.glb exported, final SUCCESS marker.
+The supplied JSON confirms trianglesBefore=7993 and trianglesAfter=7993,
+where source glTF index accessors declare 7994. UV islands 254 -> 116.
+
+Previous diagnostic had a bug: it compared approved source count (None)
+against after=7993 and falsely claimed a triangle disappeared DURING
+UV repair. Fix: compare Blender before versus after directly. They match.
+
+Read-only source accessor audit is extended to EXACT oriented duplicate
+faces in a single primitive. These reference the identical three indices
+and have identical orientation and material; reversed winding is NOT
+considered a duplicate. The audit still detects zero-area triangles.
+Only proven redundant faces can be excluded automatically.
+
+If source has no provably redundant triangle but the user confirms the
+model visually looks correct, a separate OFF-BY-DEFAULT checkbox in
+the existing-bake recovery UI allows one pre-import face difference.
+Conditions: difference exactly ONE, before==after, valid UV count, five
+verified PBR images, original source SHA, existing GLB triangle match
+and immutable owned recovery path. This option is ONLY on resume,
+never on unattended new Blender bakes.
+
+A successful manual exception is recorded permanently in the immutable
+Repair_Manifest.json fields geometryAcceptancePolicy,
+sourceImportTriangleDelta and explicitOneFaceImportLossApproval. It is
+an openly approved geometry difference, NOT an assertion that the GLB
+mesh exactly matches the source. Original GLB and existing Unity assets
+are not changed. If delta >=2 or changes during repair, reject.
+
+Use the existing completed attempt (prefer the logged ID starting
+'234d14ab') in Studio under Auto UV + Texture Repair, preserve profile,
+1024 px. Click 'Önceki bake'i tamamla' after choosing the appropriate
+Texture Export. If automatic duplicate audit cannot explain it,
+optionally tick the one-face approval after checking the mesh. Neither
+action starts Blender, ComfyUI or Unity Editor.
+
+Real 5.1.2 workstation Rust/Blender acceptance is still pending.
+GitHub CI remains workflow_dispatch only and is NOT run for this change.

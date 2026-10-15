@@ -136,9 +136,10 @@ export const bridge = {
   uvRepairAttempts: (assetId: string) =>
     invoke<RecoverableUvRepair[]>('list_uv_repair_attempts', { assetId }),
   resumeUVRepair: (assetId: string, versionDir: string, textureExportDir: string,
-    preset: UvRepairPreset, resolution: number) =>
+    preset: UvRepairPreset, resolution: number,
+    approveOneImportFaceLoss: boolean) =>
     invoke<UvRepairResult>('resume_uv_repair', {
-      assetId, versionDir, textureExportDir, preset, resolution,
+      assetId, versionDir, textureExportDir, preset, resolution, approveOneImportFaceLoss,
     }),
   blenderDetect: () => invoke<string | null>('blender_detect'),
   pickImage: () => open({ multiple: false, directory: false, filters: [{ name: 'Reference image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] }),

@@ -6,11 +6,13 @@
 use crate::storage::StudioResult;
 use crate::unity_export::parse_glb;
 use serde_json::Value;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SourceTriangles {
     pub declared: u64,
     pub zero_area: u64,
+    pub duplicate_faces: u64,
     pub effective: u64,
 }
 
@@ -110,10 +112,18 @@ fn exact_zero_area(a:[f64;3], b:[f64;3], c:[f64;3]) -> bool {
     cross.iter().all(|x|*x==0.0)
 }
 
+/// Same three indices in cyclic winding order are a provably redundant face
+/// within ONE glTF primitive: same material, all vertex attributes, and front
+/// orientation. Reverse winding is intentionally NOT considered redundant.
+fn oriented_key(a:usize,b:usize,c:usize) -> [usize;3] {
+    [[a,b,c],[b,c,a],[c,a,b]].into_iter().min().unwrap()
+}
+
 pub fn audit_source_triangles(src:&[u8]) -> StudioResult<SourceTriangles> {
     let (root,bin)=parse_glb(src)?;
     let mut declared=0u64;
     let mut zero_area=0u64;
+    let mut duplicate_faces=0u64;
     let meshes=root.get("meshes").and_then(Value::as_array).ok_or("glTF source meshes absent")?;
     for mesh in meshes {
         let prims=mesh.get("primitives").and_then(Value::as_array).ok_or("glTF primitives absent")?;
@@ -134,6 +144,8 @@ pub fn audit_source_triangles(src:&[u8]) -> StudioResult<SourceTriangles> {
             if indices.count%3!=0{return Err("glTF index count not divisible by three".into());}
             declared=declared.checked_add((indices.count/3) as u64)
                 .ok_or("glTF triangle count overflow")?;
+            // Reset per primitive: across primitives, materials may differ.
+            let mut seen=HashSet::<[usize;3]>::new();
             for i in (0..indices.count).step_by(3) {
                 let ia=index(&indices,i,ty)?;
                 let ib=index(&indices,i+1,ty)?;
@@ -143,12 +155,17 @@ pub fn audit_source_triangles(src:&[u8]) -> StudioResult<SourceTriangles> {
                 let c=position(&positions,ic)?;
                 if ia==ib || ib==ic || ia==ic || exact_zero_area(a,b,c) {
                     zero_area+=1;
+                } else if !seen.insert(oriented_key(ia,ib,ic)) {
+                    duplicate_faces+=1;
                 }
             }
         }
     }
     if declared==0 {return Err("glTF source has zero triangles".into());}
-    Ok(SourceTriangles{declared,zero_area,effective:declared-zero_area})
+    Ok(SourceTriangles{
+        declared,zero_area,duplicate_faces,
+        effective:declared-zero_area-duplicate_faces,
+    })
 }
 
 #[cfg(test)]
@@ -199,9 +216,28 @@ mod tests {
     }
     #[test] fn documents_one_provably_degenerate_triangle() {
         let count=audit_source_triangles(&triangle_glb(true)).unwrap();
-        assert_eq!(count,SourceTriangles{declared:2,zero_area:1,effective:1});
+        assert_eq!(count,SourceTriangles{declared:2,zero_area:1,duplicate_faces:0,effective:1});
         let clean=audit_source_triangles(&triangle_glb(false)).unwrap();
-        assert_eq!(clean,SourceTriangles{declared:2,zero_area:0,effective:2});
+        assert_eq!(clean,SourceTriangles{declared:2,zero_area:0,duplicate_faces:0,effective:2});
+    }
+    #[test] fn redundant_faces_same_winding_count_once() {
+        assert_eq!(oriented_key(0,1,2), oriented_key(1,2,0));
+        assert_eq!(oriented_key(0,1,2), oriented_key(2,0,1));
+        assert_ne!(oriented_key(0,1,2), oriented_key(0,2,1));
+        let mut glb=triangle_glb(false);
+        // This fixture has a two-triangle buffer. The checker above verifies
+        // oriented-key behavior without inventing a duplicate binary blob.
+        assert_eq!(audit_source_triangles(&glb).unwrap().duplicate_faces,0);
+        // Mutate second triangle indices to the *same* oriented face as the
+        // first one (0,1,2). Blender can remove such duplicate faces on import.
+        let second_start=glb.len()-6;
+        glb[second_start..].copy_from_slice(&[
+            1,0,2,0,0,0, // u16 indices 1,2,0
+        ]);
+        let audit=audit_source_triangles(&glb).unwrap();
+        assert_eq!(audit,SourceTriangles{
+            declared:2,zero_area:0,duplicate_faces:1,effective:1,
+        });
     }
     #[test] fn refuses_out_of_bounds_source_triangle_indices() {
         let mut glb=triangle_glb(false);

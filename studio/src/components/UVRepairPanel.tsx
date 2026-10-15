@@ -25,6 +25,7 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
   const [error,setError] = useState('');
   const [recoverable,setRecoverable] = useState<RecoverableUvRepair[]>([]);
   const [chosenRecovery,setChosenRecovery] = useState('');
+  const [approveOneImportFaceLoss,setApproveOneImportFaceLoss] = useState(false);
 
   useEffect(()=>{
     let alive=true;
@@ -47,7 +48,7 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
     }
   }
   useEffect(()=>{
-    setRecoverable([]);setChosenRecovery('');
+    setRecoverable([]);setChosenRecovery('');setApproveOneImportFaceLoss(false);
     void refreshRecoverable();
     // Asset and export history changes should refresh recoverable runs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -71,13 +72,14 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
 
   const matches = recoverable.filter(a=>a.profile===preset && a.resolution===resolution);
   const recovery = matches.find(a=>a.versionDir===chosenRecovery) ?? matches[0];
+  const importFaceDelta = recovery ? asset.triangleCount - recovery.inputTriangles : 0;
 
   async function resume() {
     if (!selected || !recovery || busy || !canRepair) return;
     setBusy(true);setError('');setResult(null);
     try {
       const repaired=await bridge.resumeUVRepair(
-        asset.id,recovery.versionDir,selected,preset,resolution);
+        asset.id,recovery.versionDir,selected,preset,resolution,approveOneImportFaceLoss);
       if (!repaired.sourceUntouched || repaired.newIslands<1 ||
           repaired.newIslands>repaired.oldIslands || repaired.asset.id===asset.id) {
         throw new Error('Kurtarılmış UV varlığı kabul kontrolünü geçmedi.');
@@ -109,13 +111,13 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
     </select><ChevronDown size={13}/></div></label>
     <label className="unity-export-select"><span>DÜZELTME PROFİLİ</span><div><select
       aria-label="UV Repair profil" value={preset} disabled={busy}
-      onChange={e=>{setPreset(e.target.value as UvRepairPreset);setResult(null);}}>
+      onChange={e=>{setPreset(e.target.value as UvRepairPreset);setResult(null);setApproveOneImportFaceLoss(false);}}>
       <option value="preserve">Doğal · Kaynak PBR değerlerini koru</option>
       <option value="plush">Peluş / kumaş · Metal=0, Roughness ≥0.82</option>
     </select><ChevronDown size={13}/></div></label>
     <label className="unity-export-select"><span>YENİ TEXTURE BOYUTU</span><div><select
       aria-label="UV Repair çözünürlük" value={resolution} disabled={busy}
-      onChange={e=>{setResolution(Number(e.target.value));setResult(null);}}>
+      onChange={e=>{setResolution(Number(e.target.value));setResult(null);setApproveOneImportFaceLoss(false);}}>
       <option value={512}>512 px</option><option value={1024}>1024 px</option><option value={2048}>2048 px</option>
     </select><ChevronDown size={13}/></div></label>
     <button type="button" className="uv-repair-advanced" aria-expanded={advanced}
@@ -140,11 +142,20 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
       <p className="block-description">Mevcut 5 PBR PNG ve UV'yi tekrar üretmeden doğrulayarak yeni asset oluştur. Gerçek bir geometri kaybı varsa işlem yine durur.</p>
       <label className="unity-export-select"><span>KURTARILACAK SÜRÜM</span><div>
         <select aria-label="Önceki UV onarım sürümü" value={recovery?.versionDir??''}
-          disabled={busy} onChange={e=>setChosenRecovery(e.target.value)}>
+          disabled={busy} onChange={e=>{setChosenRecovery(e.target.value);setApproveOneImportFaceLoss(false);}}>
           {matches.map(a=><option key={a.versionDir} value={a.versionDir}>
             {a.versionDir.split(/[\\/]/).pop()?.slice(0,8)} · UV {a.oldIslands} → {a.newIslands} · {a.inputTriangles} tris
           </option>)}
         </select><ChevronDown size={13}/></div></label>
+      {importFaceDelta===1&&<label className="uv-repair-toggle">
+        <input type="checkbox" aria-label="Blender içe aktarma tek üçgen farkını bilinçli kabul et"
+          checked={approveOneImportFaceLoss} disabled={busy}
+          onChange={e=>setApproveOneImportFaceLoss(e.target.checked)}/>
+        <span><strong>Dikkat: kaynak {asset.triangleCount}, Blender {recovery?.inputTriangles} üçgen.</strong>
+          Kaynakta yinelenen yüz kanıtlanamazsa bile, modeli gözle inceledikten sonra
+          bu **yalnız bir üçgenlik içe aktarma farkını** açıkça kabul edebilirsin.
+          Orijinal model değişmez; bu istisna yeni varlığın manifestine kaydedilir.</span>
+      </label>}
       <button type="button" data-testid="uv-resume-button" className="btn btn-outline btn-full"
         disabled={!enabled} onClick={()=>void resume()}>
         {busy?<LoaderCircle className="spin" size={15}/>:<Layers3 size={15}/>}
@@ -166,6 +177,13 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
     {result&&<div className="uv-repair-result" role="status" data-testid="uv-repair-success">
       <strong><Check size={14}/> Yeni temiz sürüm arşive eklendi</strong>
       <span>UV adası: {result.oldIslands} → {result.newIslands} · {result.strategy==='smart-project-fallback'?'Yedek UV yöntemi':'Açı + topoloji ile unwrap'}</span>
+      {result.asset.triangleCount!==asset.triangleCount&&
+        <p className="mini-disclaimer" role="note">
+          Geometri notu: kaynak {asset.triangleCount} → yeni {result.asset.triangleCount} üçgen.
+          Bu fark Blender içe aktarımında oluştu; orijinal dosyan korunuyor.
+          Unity aktarımından önce temiz modelin yüzeyini görsel olarak kontrol et.
+          Kabul yöntemi Repair_Manifest.json dosyasına kaydedildi.
+        </p>}
       <button type="button" className="btn btn-outline btn-full"
         onClick={()=>void onOpen(result.asset)}>Temiz modeli 3D Inspector’da aç</button>
       <button type="button" className="btn btn-ghost btn-full"

@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 const asset = {id:'ac1922e1-a1a1-4777-a911-fbedfccdfe81', title:'PLAYBOX Fox Plush', engine:'Pixal3D',
   station:'5080',createdAt:'2026-10-15T00:00:00+03:00', fileSize:3339600,
-  triangleCount:7998,vertexCount:6252,materialCount:1,textureCount:3,
+  triangleCount:7994,vertexCount:6252,materialCount:1,textureCount:3,
   sha256:'a'.repeat(64),filePath:'C:\\Studio\\original.glb'};
 
 function simpleGlb():string {
@@ -94,5 +94,18 @@ test('can resume completed 5-map bake without launching Blender or a new UV job'
   const calls=await page.evaluate(()=>(window as unknown as {__repairCalls:unknown[]}).__repairCalls);
   expect(calls).toHaveLength(1);
   expect(calls[0]).toMatchObject({resume:{assetId:asset.id,preset:'preserve',resolution:1024,
-    textureExportDir:'C:\\Test\\texture_exports\\pbr_1024'}});
+    textureExportDir:'C:\\Test\\texture_exports\\pbr_1024',approveOneImportFaceLoss:false}});
+});
+
+test('single import-face mismatch requires explicit opt-in before backend override',async({page})=>{
+  await openStudio(page,true,true);
+  const checkbox=page.getByRole('checkbox',{name:'Blender içe aktarma tek üçgen farkını bilinçli kabul et'});
+  await expect(checkbox).toBeVisible();
+  await expect(checkbox).not.toBeChecked();
+  await checkbox.check();
+  await page.getByTestId('uv-resume-button').click();
+  await expect(page.getByTestId('uv-repair-success')).toBeVisible();
+  const calls=await page.evaluate(()=>(window as unknown as {__repairCalls:unknown[]}).__repairCalls);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).toMatchObject({resume:{assetId:asset.id,approveOneImportFaceLoss:true}});
 });
