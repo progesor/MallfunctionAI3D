@@ -404,7 +404,7 @@ function App() {
               <strong>QA FAIL · UV REVIEW</strong> — Bu varlık yalnız görsel/UV inceleme
               taslağıdır. Kalite kontrolünü geçmedi; Unity export engellendi.
               Orijinal model arşivde korunuyor.
-            </p>
+            </p>}
             <div className="stats-grid"><Metric label="TRIANGLES" value={selectedAsset.triangleCount.toLocaleString('en-US')}/><Metric label="VERTICES" value={selectedAsset.vertexCount.toLocaleString('en-US')}/><Metric label="MATERIALS" value={String(selectedAsset.materialCount)}/><Metric label="GLB SIZE" value={formatBytes(selectedAsset.fileSize)}/></div>
             <TextureInspector glbBase64={glb} assetTitle={selectedAsset.title} assetId={selectedAsset.id} canExport={!reviewOnlyAsset && !/ \/ LOD\d+$/.test(previewLabel)} onExportComplete={() => setTextureExportRevision(x => x + 1)} />
             <div className="separator"/>
