@@ -18,6 +18,7 @@ import { ModelViewport } from './components/ModelViewport';
 import { TextureInspector } from './components/TextureInspector';
 import { UnityExportPanel } from './components/UnityExportPanel';
 import { UVRepairPanel } from './components/UVRepairPanel';
+import { TextureRepairPanel } from './components/TextureRepairPanel';
 import './styles/app.css';
 
 const initialSettings: Settings = {
@@ -81,6 +82,7 @@ function App() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [reviewOnlyAsset, setReviewOnlyAsset] = useState(false);
+  const [reviewKind, setReviewKind] = useState<'uv'|'texture'|null>(null);
   const [glb, setGlb] = useState<string | null>(null);
   const [previewLabel, setPreviewLabel] = useState('');
   const [viewLoading, setViewLoading] = useState(false);
@@ -181,6 +183,8 @@ function App() {
       ]);
       const provenance=(manifest?.provenance ?? null) as Record<string,unknown> | null;
       setReviewOnlyAsset(provenance?.reviewOnly === true);
+      setReviewKind(provenance?.origin === 'texture-seam-repair' ? 'texture' :
+        provenance?.origin === 'uv-repair' ? 'uv' : null);
       setSelectedAsset(asset);setGlb(data);setLod(report);setPreviewLabel(`${asset.title}${lodIndex === undefined ? ' / Source' : ` / LOD${lodIndex}`}`);
       setActive('inspection');
     } catch (e) { setError(`GLB görüntülenemedi: ${String(e)}`); }
@@ -410,12 +414,19 @@ function App() {
             <span className="section-label">SELECTED MODEL</span><h3>{selectedAsset.title}</h3>
             <div className="asset-meta"><span>{selectedAsset.engine}</span><span>{shortDate(selectedAsset.createdAt)}</span></div>
             {reviewOnlyAsset&&<p role="alert" className="unity-export-error">
-              <strong>QA FAIL · UV REVIEW</strong> — Bu varlık yalnız görsel/UV inceleme
-              taslağıdır. Kalite kontrolünü geçmedi; Unity export engellendi.
-              Orijinal model arşivde korunuyor.
+              <strong>{reviewKind==='texture'?'TEXTURE REVIEW · GÖRSEL ONAY BEKLİYOR':
+                'QA FAIL · UV REVIEW'}</strong> — {reviewKind==='texture'
+                ? 'Yalnız dikiş yakınlarında texture düzenlemesi yapıldı. Kaynak modelle karşılaştırıp onay vermeden Unity export yapılamaz.'
+                : 'UV taslağı kalite denetimini geçmedi; üretim için uygun değil.'}
+              {' '}Orijinal model arşivde korunuyor.
             </p>}
             <div className="stats-grid"><Metric label="TRIANGLES" value={selectedAsset.triangleCount.toLocaleString('en-US')}/><Metric label="VERTICES" value={selectedAsset.vertexCount.toLocaleString('en-US')}/><Metric label="MATERIALS" value={String(selectedAsset.materialCount)}/><Metric label="GLB SIZE" value={formatBytes(selectedAsset.fileSize)}/></div>
             <TextureInspector glbBase64={glb} assetTitle={selectedAsset.title} assetId={selectedAsset.id} canExport={!reviewOnlyAsset && !/ \/ LOD\d+$/.test(previewLabel)} onExportComplete={() => setTextureExportRevision(x => x + 1)} />
+            <div className="separator"/>
+            <TextureRepairPanel asset={selectedAsset} revision={textureExportRevision}
+              canRepair={!reviewOnlyAsset && !/ \/ LOD\d+$/.test(previewLabel)}
+              onCreated={async()=>{await refresh();}}
+              onOpen={showAsset}/>
             <div className="separator"/>
             <UVRepairPanel asset={selectedAsset} revision={textureExportRevision}
               canRepair={!reviewOnlyAsset && !/ \/ LOD\d+$/.test(previewLabel)}

@@ -9,6 +9,9 @@ mod unity_native;
 mod uv_repair;
 mod uv_engines;
 mod uv_triangle_audit;
+mod texture_seam_geometry;
+mod texture_seam_pixels;
+mod texture_surface;
 
 use tauri::Manager;
 
@@ -40,6 +43,9 @@ pub fn run() {
             uv_repair::save_uv_review,
             uv_engines::uv_engine_status,
             uv_engines::install_uv_xatlas,
+            texture_surface::analyze_texture_seams,
+            texture_surface::repair_texture_seams,
+            texture_surface::approve_texture_seam_review,
             commands::read_reference_preview,
             commands::move_asset_to_trash,
             commands::get_asset_manifest,

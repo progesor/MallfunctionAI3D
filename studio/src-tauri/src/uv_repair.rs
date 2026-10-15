@@ -86,7 +86,7 @@ fn read_baked_png(version:&Path, role:&str, resolution:u32) -> StudioResult<(Rgb
     Ok((img,raw))
 }
 
-fn gltf_factors(source:&[u8]) -> StudioResult<(Value,f32,f32,f32,f32,bool)> {
+pub(crate) fn gltf_factors(source:&[u8]) -> StudioResult<(Value,f32,f32,f32,f32,bool)> {
     // Require a single opaque, standard PBR material, not an unsafe conversion.
     geometry_only_glb(source)?;
     let (root,_)=parse_glb(source)?;
@@ -125,7 +125,7 @@ fn gltf_factors(source:&[u8]) -> StudioResult<(Value,f32,f32,f32,f32,bool)> {
 /// Input PNGs are separate grayscale maps from the existing Texture Export.
 /// The optional plush profile is explicit; the Preserve profile changes no
 /// material factor or channel value.
-fn make_orm(
+pub(crate) fn make_orm(
     metallic:&RgbaImage, roughness:&RgbaImage, occlusion:&RgbaImage,
     metallic_factor:f32, roughness_factor:f32, preset:&str,
 ) -> StudioResult<(RgbaImage,f32,f32)> {
@@ -160,7 +160,7 @@ fn glb_chunk(dst:&mut Vec<u8>, tag:&[u8;4], data:&[u8], fill:u8)->StudioResult<(
     Ok(())
 }
 
-fn build_repaired_glb(
+pub(crate) fn build_repaired_glb(
     geometry:&[u8], base:&[u8], orm:&[u8], normal:&[u8],
     base_factor:Value, metal_factor:f32, rough_factor:f32, ao_strength:f32, normal_scale:f32,
     double_sided:bool,

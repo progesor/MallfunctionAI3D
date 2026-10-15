@@ -498,3 +498,21 @@ button { transition: background-color .14s ease, color .14s ease, border-color .
 .uv-runtime-version {font-size:.69rem;overflow-wrap:anywhere;line-height:1.45;
   color:var(--text-soft,#a5b7c5);padding:3px 0;}
 .uv-engine-jump {white-space:nowrap;}
+
+/* M3: UV-preserving, source-normal-safe seam inspection and review workflow. */
+.texture-surface-panel {display:grid;gap:9px;min-width:0;}
+.texture-surface-panel .block-description {margin:0;font-size:.76rem;line-height:1.53;}
+.texture-surface-panel .uv-repair-advanced {display:flex;align-items:center;gap:6px;width:100%;}
+.texture-surface-settings {display:grid;grid-template-columns:1fr 1fr;gap:8px;min-width:0;}
+.texture-surface-settings .unity-export-select,
+.texture-surface-settings .unity-export-select select {min-width:0;width:100%;}
+.texture-surface-diagnostics,.texture-surface-result,.texture-surface-review {
+  display:grid;gap:8px;padding:10px;border:1px solid rgba(135,180,195,.28);
+  border-radius:9px;min-width:0;overflow-wrap:anywhere;font-size:.76rem;}
+.texture-surface-diagnostics p,.texture-surface-result p,.texture-surface-review p {
+  margin:0;line-height:1.5;}
+.texture-surface-maps {display:grid;gap:3px;}
+.texture-surface-role {display:flex;align-items:center;gap:7px;font-size:.77rem;min-width:0;}
+.texture-surface-role small {margin-left:auto;text-align:right;white-space:nowrap;color:var(--text-soft,#9bb0bc);}
+.texture-surface-review .unity-export-error {margin:0;white-space:normal;}
+.texture-surface-panel .mini-disclaimer {line-height:1.5;}

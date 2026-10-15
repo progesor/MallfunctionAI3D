@@ -122,6 +122,55 @@ export interface UvRepairResult {
       visibleTrianglesPreserved: boolean };
   };
 }
+/** UV-preserving 3D seam repair. Normal map is never edited. */
+export type SurfaceRepairMode = 'gentle' | 'balanced';
+export type SeamEditableRole = 'baseColor' | 'metallic' | 'roughness' | 'occlusion';
+export interface SeamGeometryHealth {
+  triangles: number;
+  vertices: number;
+  geometricEdges: number;
+  candidateUvSeams: number;
+  continuousEdges: number;
+  intentionalSharpEdgesSkipped: number;
+  nonManifoldEdgesSkipped: number;
+  openBoundaryEdges: number;
+  degenerateFacesSkipped: number;
+}
+export interface SeamMapReport {
+  role: SeamEditableRole;
+  sourceWidth: number;
+  sourceHeight: number;
+  eligibleSamples: number;
+  largeDifferenceSamplesSkipped: number;
+  unchangedSamples: number;
+  changedPixels: number;
+  changedFraction: number;
+  meanPixelDelta: number;
+  maximumPixelDelta: number;
+  scope: string;
+}
+export interface SurfaceInspection {
+  sourceUntouched: boolean;
+  uvUnchanged: boolean;
+  sourceNormalUnchanged: boolean;
+  geometry: SeamGeometryHealth;
+  maps: SeamMapReport[];
+  editablePixels: number;
+  eligibleSeamPairs: number;
+  workflow: string;
+  warning: string;
+}
+export interface SurfaceRepairResult {
+  asset: Asset;
+  versionDir: string;
+  reportPath: string;
+  inspection: SurfaceInspection;
+  sourceUntouched: boolean;
+  sourceNormalUnchanged: boolean;
+  uvUnchanged: boolean;
+  reviewOnly: boolean;
+}
+
 export type UnityPipeline = 'Auto' | 'URP' | 'HDRP';
 export interface UnityProjectInfo {
   projectPath: string; editorVersion: string; pipeline: string;
@@ -196,6 +245,18 @@ export const bridge = {
   }),
   uvEngineStatus: () => invoke<UvEngineStatus>('uv_engine_status'),
   installUvXatlas: () => invoke<UvEngineStatus>('install_uv_xatlas'),
+  surfaceAnalyze: (assetId:string, textureExportDir:string,
+    mode:SurfaceRepairMode, radius:number) =>
+    invoke<SurfaceInspection>('analyze_texture_seams', {
+      assetId,textureExportDir,mode,radius
+    }),
+  surfaceRepair: (assetId:string, textureExportDir:string,
+    mode:SurfaceRepairMode,radius:number,roles:SeamEditableRole[]) =>
+    invoke<SurfaceRepairResult>('repair_texture_seams', {
+      assetId,textureExportDir,mode,radius,roles
+    }),
+  surfaceApprove: (reviewAssetId:string,confirmedVisualReview:boolean) =>
+    invoke<Asset>('approve_texture_seam_review', {reviewAssetId,confirmedVisualReview}),
   blenderDetect: () => invoke<string | null>('blender_detect'),
   pickImage: () => open({ multiple: false, directory: false, filters: [{ name: 'Reference image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] }),
   pickGlb: () => open({ multiple: false, directory: false, filters: [{ name: 'glTF Binary', extensions: ['glb'] }] }),
