@@ -472,3 +472,10 @@ button { transition: background-color .14s ease, color .14s ease, border-color .
 .uv-repair-error details {font-size:.75rem;max-width:100%;min-width:0;}
 .uv-repair-error summary {cursor:pointer;}
 .uv-repair-error pre {max-height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:.7rem;line-height:1.4;}
+
+/* Resume existing PBR bakes without repeating Blender/Cycles work. */
+.uv-repair-recovery {display:grid;gap:8px;border:1px solid rgba(150,180,200,.25);
+  border-radius:9px;padding:10px;min-width:0;}
+.uv-repair-recovery strong {display:flex;align-items:center;gap:6px;font-size:.8rem;}
+.uv-repair-recovery p {margin:0;}
+.uv-repair-recovery .unity-export-select {min-width:0;}

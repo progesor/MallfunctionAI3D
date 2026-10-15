@@ -234,3 +234,39 @@ Read only, on user's Windows workstation:
 
 This is a diagnostic hotfix, not a declaration that the Fox repair passed.
 No Windows CI was triggered; the branch's workflow remains manual-only.
+
+## 2026-10-15 · Fox triangle audit and no-bake recovery
+
+Real Fox report: Studio source accessor triangles 7994; Blender imported and
+finished with 7993, unchanged throughout UV repair. Islands 254 -> 116,
+connected components 9, seam edges 745, welded working vertices 2596.
+Five PBR maps and geometry.glb have already been generated at 1024px.
+
+Studio's raw index-count was overly strict for Blender-imported GLB input.
+The new UV audit decodes actual source POSITION and index accessor bytes,
+including byte offsets and strides, to identify ONLY proven zero-area
+indexed triangles. The smaller Blender count is accepted only if precisely
+explained by these triangles, and Blender before/after counts are equal.
+A generic one-triangle tolerance is NOT granted. If zero-area evidence is
+absent, original.glb is required to investigate the lost triangle.
+
+New Studio button: Önceki bake'i tamamla (Blender çalışmaz).
+Completed previous runs are listed with UV island counts and profile.
+After selecting the exact source Texture Export, Studio verifies its five
+snapshot images byte-for-byte, original GLB SHA, version ownership, Blender
+success markers, source index geometry, output UV/triangles/PNGs, and
+preset and resolution. It then rebuilds embedded PBR GLB from existing
+geometry.glb and baked PNGs and registers a new library asset.
+No ComfyUI, Blender, LOD, or Unity Editor run is part of recovery.
+Prior versions and the original GLB remain immutable.
+
+Offline local checks (CI stays manual-only):
+  python -m unittest discover -s tests -p test_uv_repair_contract.py
+  cargo test --manifest-path studio/src-tauri/Cargo.toml --lib uv_triangle_audit
+  cargo test --manifest-path studio/src-tauri/Cargo.toml --lib uv_repair
+  cd studio; npm run build
+  npx playwright test e2e/uv-repair.spec.ts --workers=1
+
+Real Blender/Unity acceptance still pending. Source GLB bytes are not
+available in the assistant environment, so the proof of a zero-area
+source face must be established on the user's Windows machine.

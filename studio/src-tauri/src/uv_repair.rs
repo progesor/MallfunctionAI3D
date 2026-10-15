@@ -2,6 +2,7 @@
 //! A successful repair is registered as a NEW catalog asset. ComfyUI, original
 //! GLB, Blender LODs, existing texture exports and Unity prefabs are immutable.
 use crate::blender::find_blender;
+use crate::uv_triangle_audit::{audit_source_triangles, SourceTriangles};
 use crate::models::Asset;
 use crate::storage::{inspect_glb, StudioResult, StudioState};
 use crate::texture_export::{owned_asset_dir, verify_sha256};
@@ -29,6 +30,17 @@ pub struct UvRepairResult {
     pub old_islands: u64,
     pub new_islands: u64,
     pub source_untouched: bool,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all="camelCase")]
+pub struct RecoverableUvRepair {
+    pub version_dir: String,
+    pub profile: String,
+    pub resolution: u32,
+    pub old_islands: u64,
+    pub new_islands: u64,
+    pub input_triangles: u64,
 }
 
 struct PreparedRepair {
@@ -210,7 +222,9 @@ fn read_blender_result(version:&Path, exit_success:bool, exit_code:Option<i32>, 
 /// Validate the Blender report without silently accepting topology changes.
 /// Keep exact observed values in the UI error so a completed five-map bake
 /// can be diagnosed from its existing Repair_Report.json without rerunning it.
-fn verify_repair_report(report:&Value, source_triangles:u64, version:&Path) -> StudioResult<(u64,u64)> {
+fn verify_repair_report(
+    report:&Value, audit:&SourceTriangles, version:&Path
+) -> StudioResult<(u64,u64,u64)> {
     let untouched=report.get("sourceUntouched").and_then(Value::as_bool);
     let before=report.get("trianglesBefore").and_then(Value::as_u64);
     let after=report.get("trianglesAfter").and_then(Value::as_u64);
@@ -218,10 +232,19 @@ fn verify_repair_report(report:&Value, source_triangles:u64, version:&Path) -> S
     let new=report.pointer("/uv/newUVIslands").and_then(Value::as_u64);
     let mut failures=Vec::new();
     if untouched!=Some(true) {failures.push("sourceUntouched != true");}
-    if before!=Some(source_triangles) {failures.push("Blender input triangle count != source GLB");}
-    if after!=Some(source_triangles) {failures.push("Blender output triangle count != source GLB");}
-    if old.is_none() {failures.push("uv.oldUVIslands missing or not a nonnegative integer");}
-    if new.is_none() {failures.push("uv.newUVIslands missing or not a nonnegative integer");}
+    let accepted=match before {
+        Some(n) if n==audit.declared=>Some(n),
+        Some(n) if audit.zero_area>0 && n==audit.effective=>Some(n),
+        _=>None,
+    };
+    if accepted.is_none() {
+        failures.push("Blender input triangle count cannot be explained by audited source geometry");
+    }
+    if accepted!=after {
+        failures.push("Blender changed triangle count DURING UV repair");
+    }
+    if old.is_none() {failures.push("uv.oldUVIslands missing or not an integer");}
+    if new.is_none() {failures.push("uv.newUVIslands missing or not an integer");}
     if old==Some(0) {failures.push("source has zero UV islands");}
     if new==Some(0) {failures.push("repaired atlas has zero UV islands");}
     if matches!((old,new),(Some(a),Some(b)) if b>a) {
@@ -229,15 +252,182 @@ fn verify_repair_report(report:&Value, source_triangles:u64, version:&Path) -> S
     }
     if !failures.is_empty() {
         return Err(format!(
-            "UV/PBR kabul kontrolü: {}. Kaynak GLB triangles={source_triangles}; \
-             Blender trianglesBefore={before:?}, trianglesAfter={after:?}; \
-             sourceUntouched={untouched:?}; UV oldUVIslands={old:?}, newUVIslands={new:?}. \
-             Geometriyi değiştiren sonuç otomatik kabul edilmedi. \
-             Mevcut rapor: {}. Beş haritayı yeniden bake etmeden önce raporu paylaş.",
-            failures.join("; "),version.join("Repair_Report.json").display()
+            "UV/PBR kabul kontrolü: {}. Kaynak GLB indeks üçgeni={}; \
+             doğrulanmış sıfır-alan üçgeni={}; kalan geçerli={}; \
+             Blender before={before:?}, after={after:?}; \
+             sourceUntouched={untouched:?}, UV old={old:?}, new={new:?}. \
+             Sadece kaynağın GERÇEK indeks/konum verilerinden kanıtlanan \
+             sıfır alanlı üçgenler hariç tutulabilir; kör tolerans uygulanmadı. \
+             Rapor: {}. Gerekirse kaynak original.glb dosyasını paylaş.",
+            failures.join("; "),audit.declared,audit.zero_area,audit.effective,
+            version.join("Repair_Report.json").display()
         ));
     }
-    Ok((old.expect("checked oldUVIslands"),new.expect("checked newUVIslands")))
+    Ok((old.unwrap(),new.unwrap(),accepted.unwrap()))
+}
+
+
+/// Finalize Blender's completed outputs, preserving the original five bakes.
+/// This is also called when resuming a previously rejected completed attempt.
+fn finalize_repair(
+    asset_dir:&Path, file_path:&Path, source_sha:&str,
+    texture_version:&str, version:&Path, preset:&str, resolution:u32,
+) -> StudioResult<PreparedRepair> {
+    let base=asset_dir.join("uv_repairs").canonicalize()
+        .map_err(|e|format!("UV onarım arşivi bulunamadı: {e}"))?;
+    let folder=version.canonicalize().map_err(|e|
+        format!("Tamamlanacak UV klasörü bulunamadı: {}: {e}",version.display()))?;
+    if folder.parent()!=Some(base.as_path()) ||
+        !folder.file_name().and_then(|x|x.to_str())
+            .is_some_and(|x|Uuid::parse_str(x).is_ok()) {
+        return Err("UV kurtarma sürümü seçili kaynak modelin arşivine ait değil".into());
+    }
+    let manifest_path=folder.join("Repair_Manifest.json");
+    if manifest_path.exists(){
+        return Err("Bu UV sürümü önceden tamamlanmış; tekrar arşive eklenmeyecek".into());
+    }
+    verify_sha256(file_path,source_sha)?;
+    let original=fs::read(file_path).map_err(|e|e.to_string())?;
+    let (tint,metal_factor_src,rough_factor_src,ao_factor,normal_scale,double_sided)=gltf_factors(&original)?;
+    let asset_id=asset_dir.file_name().and_then(|s|s.to_str()).ok_or("Asset UUID missing")?;
+    let (map_dir,map_manifest)=existing_texture_dir(
+        asset_dir,asset_id,source_sha,texture_version)?;
+    // The prior attempt must have baked the EXACT currently selected export
+    // inputs; arbitrary files in an old version may not be rebound silently.
+    let source_dir=folder.join("SourceMaps").canonicalize()
+        .map_err(|e|format!("SourceMaps kaydı bulunamadı: {e}"))?;
+    for role in ROLES {
+        let name=format!("m0_{role}.png");
+        png_map(&map_dir,&map_manifest,&name)?;
+        let snapshot=source_dir.join(&name);
+        let checked=snapshot.canonicalize().map_err(|e|
+            format!("Kurtarma haritası kayıp: {}: {e}",snapshot.display()))?;
+        if checked.parent()!=Some(source_dir.as_path()) {
+            return Err("UV kurtarma SourceMaps yolu güvenli değil".into());
+        }
+        if fs::read(&checked).map_err(|e|e.to_string())? !=
+           fs::read(map_dir.join(&name)).map_err(|e|e.to_string())? {
+            return Err(format!(
+                "Önceki bake {} adlı farklı Texture Export sürümünü kullanmış. \
+                 Kaynak PBR sürümünü değiştir veya yeniden bake et.",name
+            ));
+        }
+    }
+    let log_path=folder.join("Repair_Run.log");
+    let log=fs::read_to_string(&log_path).map_err(|e|
+        format!("Tamamlanmış Blender run logu kayıp: {}: {e}",log_path.display()))?;
+    if !log.contains("AI3D_UV_STAGE:complete") ||
+       !log.contains("AI3D_REPAIR_SUCCESS:") {
+        return Err(format!(
+            "Blender bake+GLB export bu klasörde tamamlanmamış: {}",
+            log_path.display()
+        ));
+    }
+    let report=read_blender_result(&folder,true,Some(0),&log)?;
+    let reported_profile=report.get("profile").and_then(Value::as_str);
+    let reported_resolution=report.get("resolution").and_then(Value::as_u64);
+    let map_roles=report.get("mapRoles").and_then(Value::as_array);
+    let expected_roles=ROLES.iter().map(|x|Value::String((*x).into())).collect::<Vec<_>>();
+    if report.get("schemaVersion").and_then(Value::as_u64)!=Some(1) ||
+       report.get("normalRebakedInTangentSpace").and_then(Value::as_bool)!=Some(true) ||
+       reported_profile!=Some(preset) || reported_resolution!=Some(resolution as u64) ||
+       map_roles!=Some(&expected_roles) {
+        return Err(format!(
+            "Kurtarılacak Blender raporu seçili profil/çözünürlük/5 PBR map \
+             değerleriyle uyuşmuyor: profile={reported_profile:?}, \
+             resolution={reported_resolution:?}. Rapor: {}",
+            folder.join("Repair_Report.json").display()
+        ));
+    }
+    let audit=audit_source_triangles(&original)?;
+    let declared=inspect_glb(&original)?.0;
+    if audit.declared!=declared{
+        return Err(format!("GLB triangle audit mismatch: {} vs {declared}",audit.declared));
+    }
+    let (old_islands,new_islands,accepted_triangles)=
+        verify_repair_report(&report,&audit,&folder)?;
+    let (_,base_color)=read_baked_png(&folder,"baseColor",resolution)?;
+    let (_,normal)=read_baked_png(&folder,"normal",resolution)?;
+    let (metal,_)=read_baked_png(&folder,"metallic",resolution)?;
+    let (rough,_)=read_baked_png(&folder,"roughness",resolution)?;
+    let (ao,_)=read_baked_png(&folder,"occlusion",resolution)?;
+    if !folder.join("UV_Layout.svg").is_file() ||
+       !folder.join("Repair_Working.blend").is_file() {
+        return Err("Tamamlanmış Blender çalışma dosyası veya UV atlası eksik".into());
+    }
+    let (orm,metal_factor,rough_factor)=make_orm(
+        &metal,&rough,&ao,metal_factor_src,rough_factor_src,preset)?;
+    let orm_bytes=png_bytes(&orm)?;
+    let orm_path=folder.join("Textures/ORM.png");
+    if orm_path.exists() {
+        if fs::read(&orm_path).map_err(|e|e.to_string())?!=orm_bytes {
+            return Err(format!("Kurtarma ORM.png önceki sürümle farklı: {}",orm_path.display()));
+        }
+    } else {
+        use std::io::Write;
+        fs::OpenOptions::new().write(true).create_new(true).open(&orm_path)
+            .map_err(|e|e.to_string())?
+            .write_all(&orm_bytes).map_err(|e|e.to_string())?;
+    }
+    let geometry_path=folder.join("geometry.glb");
+    let checked_geometry=geometry_path.canonicalize().map_err(|e|
+        format!("Blender geometry.glb kayıp: {}: {e}",geometry_path.display()))?;
+    if checked_geometry.parent()!=Some(folder.as_path()) {
+        return Err("UV geometry.glb arşiv dışına çıkıyor".into());
+    }
+    let geometry=fs::read(&checked_geometry).map_err(|e|e.to_string())?;
+    let geometry_tris=inspect_glb(&geometry)?.0;
+    if geometry_tris!=accepted_triangles {
+        return Err(format!(
+            "Blender geometry.glb triangle count={geometry_tris}, \
+             report triangle count={accepted_triangles}; kaynak değiştirilmedi"
+        ));
+    }
+    let output=build_repaired_glb(
+        &geometry,&base_color,&orm_bytes,&normal,
+        tint,metal_factor,rough_factor,ao_factor,normal_scale,double_sided,
+    )?;
+    let (out_triangles,_,mats,tex)=inspect_glb(&output)?;
+    if out_triangles!=accepted_triangles || mats!=1 || tex!=3 {
+        return Err(format!(
+            "Yeni UV GLB PBR/geometri kabulü başarısız: \
+             output triangles={out_triangles}, Blender triangles={accepted_triangles}, \
+             material={mats}, textures={tex}"
+        ));
+    }
+    verify_sha256(file_path,source_sha)?;
+    let repaired=folder.join("Repaired.glb");
+    if repaired.exists() {
+        if fs::read(&repaired).map_err(|e|e.to_string())?!=output{
+            return Err(format!("Mevcut Repaired.glb değiştirilmeyecek: {}",repaired.display()));
+        }
+    } else {
+        use std::io::Write;
+        fs::OpenOptions::new().write(true).create_new(true).open(&repaired)
+            .map_err(|e|e.to_string())?.write_all(&output)
+            .map_err(|e|e.to_string())?;
+    }
+    let manifest=json!({
+        "sourceGlbSha256":source_sha,
+        "repairedGlbSha256":sum_sha(&output),
+        "sourceTextureExport":map_dir,
+        "sourceUntouched":true,
+        "sourceDeclaredTriangles":audit.declared,
+        "sourceZeroAreaTriangles":audit.zero_area,
+        "blenderAcceptedTriangles":accepted_triangles,
+        "uv":{"oldIslands":old_islands,"newIslands":new_islands},
+        "textureRoles":["baseColor","normal","metallic","roughness","occlusion"],
+        "outputResolution":resolution,"preset":preset,
+        "completedAt":Utc::now().to_rfc3339()
+    });
+    let manifest_data=serde_json::to_vec_pretty(&manifest).map_err(|e|e.to_string())?;
+    {
+        use std::io::Write;
+        fs::OpenOptions::new().write(true).create_new(true).open(&manifest_path)
+            .map_err(|e|format!("Repair_Manifest.json üzerine yazılmadı: {e}"))?
+            .write_all(&manifest_data).map_err(|e|e.to_string())?;
+    }
+    Ok(PreparedRepair{source:output,report,version:folder})
 }
 
 fn background_repair(
@@ -248,7 +438,7 @@ fn background_repair(
         format!("Kaynak GLB doğrulanamadı: {}: {e}",file_path.display()))?;
     let original=fs::read(&file_path).map_err(|e|
         format!("Kaynak GLB okunamadı: {}: {e}",file_path.display()))?;
-    let (base_factor,source_metal,source_rough,source_ao,source_normal,double_sided)=gltf_factors(&original)?;
+    gltf_factors(&original)?; // fail early before starting Blender
     let (map_dir,manifest)=existing_texture_dir(
         &asset_dir, asset_dir.file_name().and_then(|x|x.to_str()).ok_or("Asset klasörü geçersiz")?,
         &source_sha,&texture_version
@@ -297,44 +487,135 @@ fn background_repair(
     let log_path=version.join("Repair_Run.log");
     fs::write(&log_path,&log).map_err(|e|
         format!("Blender logu yazılamadı: {}: {e}",log_path.display()))?;
-    let report=read_blender_result(&version,execution.status.success(),execution.status.code(),&log)?;
-    let source_triangles=inspect_glb(&original)?.0;
-    let (old_islands,new_islands)=verify_repair_report(&report,source_triangles,&version)?;
-    let (_,base)=read_baked_png(&version,"baseColor",resolution)?;
-    let (_,normal)=read_baked_png(&version,"normal",resolution)?;
-    let (metal,_)=read_baked_png(&version,"metallic",resolution)?;
-    let (rough,_)=read_baked_png(&version,"roughness",resolution)?;
-    let (ao,_)=read_baked_png(&version,"occlusion",resolution)?;
-    let (orm,metal_factor,rough_factor)=make_orm(
-        &metal,&rough,&ao,source_metal,source_rough,&preset)?;
-    let orm_bytes=png_bytes(&orm)?;
-    let orm_path=version.join("Textures/ORM.png");
-    fs::write(&orm_path,&orm_bytes).map_err(|e|
-        format!("Yeni ORM haritası yazılamadı: {}: {e}",orm_path.display()))?;
-    let geometry_path=version.join("geometry.glb");
-    let geometry=fs::read(&geometry_path).map_err(|e|format!(
-        "Blender geometry.glb okunamadı: {}: {e}. Log: {}",
-        geometry_path.display(),log_path.display()))?;
-    let output=build_repaired_glb(
-        &geometry,&base,&orm_bytes,&normal,
-        base_factor,metal_factor,rough_factor,source_ao,source_normal,double_sided,
+    read_blender_result(&version,execution.status.success(),execution.status.code(),&log)?;
+    // The worker has finished; exact validations and packing are also reused
+    // by the no-bake recovery path.
+    finalize_repair(&asset_dir,&file_path,&source_sha,&texture_version,
+                    &version,&preset,resolution)
+}
+
+fn register_repair(
+    state:&StudioState, asset:&Asset, prepared:PreparedRepair
+) -> StudioResult<UvRepairResult> {
+    let report=&prepared.report;
+    let new_asset=state.store_asset(
+        &prepared.source,&format!("{} · UV Clean",asset.title),&asset.engine,
+        json!({
+            "origin":"uv-repair",
+            "parentAssetId":&asset.id,
+            "parentSha256":&asset.sha256,
+            "repairVersion":&prepared.version,
+            "repairReport":report,
+            "manualUvBlend":"Repair_Working.blend",
+            "originalImmutable":true
+        }),
     )?;
-    let (out_triangles,_,mats,tex)=inspect_glb(&output)?;
-    if out_triangles!=source_triangles || mats!=1 || tex!=3 {
-        return Err(format!("New UV GLB PBR/mesh doğrulaması geçemedi: {}",version.display()));
+    let uv=report.get("uv").ok_or("UV report missing")?;
+    Ok(UvRepairResult {
+        asset:new_asset,
+        version_dir:prepared.version.to_string_lossy().into_owned(),
+        report_path:prepared.version.join("Repair_Report.json").to_string_lossy().into_owned(),
+        working_blend:prepared.version.join("Repair_Working.blend").to_string_lossy().into_owned(),
+        uv_layout:prepared.version.join("UV_Layout.svg").to_string_lossy().into_owned(),
+        strategy:uv.get("strategy").and_then(Value::as_str).unwrap_or("unknown").into(),
+        old_islands:uv.get("oldUVIslands").and_then(Value::as_u64).unwrap_or(0),
+        new_islands:uv.get("newUVIslands").and_then(Value::as_u64).unwrap_or(0),
+        source_untouched:true,
+    })
+}
+
+/// Finds completed Blender bakes that were rejected by Studio's previous
+/// over-strict raw index count check. Listing never mutates or retries Blender.
+#[tauri::command]
+pub fn list_uv_repair_attempts(
+    asset_id:String, state:State<'_,StudioState>
+) -> StudioResult<Vec<RecoverableUvRepair>> {
+    let asset=state.asset_by_id(&asset_id)?;
+    let dir=owned_asset_dir(&asset.file_path,&asset_id)?;
+    let root=dir.join("uv_repairs");
+    if !root.is_dir() {return Ok(Vec::new());}
+    let mut found=Vec::new();
+    for entry in fs::read_dir(&root).map_err(|e|e.to_string())? {
+        let entry=entry.map_err(|e|e.to_string())?;
+        let ty=entry.file_type().map_err(|e|e.to_string())?;
+        if !ty.is_dir() || ty.is_symlink(){continue;}
+        let version=entry.path();
+        if !version.file_name().and_then(|s|s.to_str())
+            .is_some_and(|s|Uuid::parse_str(s).is_ok()) {continue;}
+        if version.join("Repair_Manifest.json").exists() ||
+            !version.join("Repair_Run.log").is_file() ||
+            !version.join("geometry.glb").is_file() ||
+            !version.join("Repair_Working.blend").is_file() ||
+            !version.join("UV_Layout.svg").is_file() ||
+            ROLES.iter().any(|role|!version.join("Textures").join(format!("{role}.png")).is_file()) {
+            continue;
+        }
+        let report=match read_json(&version.join("Repair_Report.json")) {
+            Ok(v)=>v,Err(_)=>continue,
+        };
+        if report.get("schemaVersion").and_then(Value::as_u64)!=Some(1) ||
+            report.get("sourceUntouched").and_then(Value::as_bool)!=Some(true){
+            continue;
+        }
+        let profile=match report.get("profile").and_then(Value::as_str){
+            Some(s @ ("preserve"|"plush"))=>s.to_owned(),_=>continue
+        };
+        let resolution=match report.get("resolution").and_then(Value::as_u64){
+            Some(x @ (512|1024|2048))=>x as u32,_=>continue
+        };
+        let old_islands=report.pointer("/uv/oldUVIslands").and_then(Value::as_u64)
+            .unwrap_or(0);
+        let new_islands=report.pointer("/uv/newUVIslands").and_then(Value::as_u64)
+            .unwrap_or(0);
+        let triangles=report.get("trianglesAfter").and_then(Value::as_u64)
+            .unwrap_or(0);
+        if old_islands==0 || new_islands==0 || new_islands>old_islands || triangles==0 {
+            continue;
+        }
+        // Limit reading log size; this endpoint must remain cheap for UI.
+        let log_path=version.join("Repair_Run.log");
+        if log_path.metadata().map(|m|m.len()).unwrap_or(u64::MAX)>5_000_000 {
+            continue;
+        }
+        let log=fs::read_to_string(&log_path).unwrap_or_default();
+        if !log.contains("AI3D_UV_STAGE:complete") ||
+           !log.contains("AI3D_REPAIR_SUCCESS:"){continue;}
+        let when=entry.metadata().ok().and_then(|m|m.modified().ok())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        found.push((when,RecoverableUvRepair{
+            version_dir:version.to_string_lossy().into_owned(),
+            profile,resolution,old_islands,new_islands,input_triangles:triangles,
+        }));
     }
-    verify_sha256(&file_path,&source_sha)?;
-    fs::write(version.join("Repaired.glb"),&output).map_err(|e|e.to_string())?;
-    let hashes=json!({"sourceGlbSha256":source_sha,
-        "repairedGlbSha256":sum_sha(&output),
-        "sourceTextureExport":map_dir,
-        "sourceUntouched":true,
-        "textureRoles":["baseColor","normal","metallic","roughness","occlusion"],
-        "outputResolution":resolution,"preset":preset,
-        "completedAt":Utc::now().to_rfc3339()});
-    fs::write(version.join("Repair_Manifest.json"),
-        serde_json::to_vec_pretty(&hashes).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
-    Ok(PreparedRepair {source:output,report,version})
+    found.sort_by(|a,b|b.0.cmp(&a.0));
+    found.truncate(16);
+    Ok(found.into_iter().map(|(_,data)|data).collect())
+}
+
+/// Complete a previously successful five-map bake WITHOUT launching Blender.
+/// The version must be inside this exact source asset; all five input snapshots,
+/// source SHA, report, geometry and texture packing are revalidated.
+#[tauri::command]
+pub async fn resume_uv_repair(
+    asset_id:String, version_dir:String, texture_export_dir:String,
+    preset:String, resolution:u32, state:State<'_,StudioState>
+) -> StudioResult<UvRepairResult> {
+    if !matches!(preset.as_str(),"preserve"|"plush") ||
+       !matches!(resolution,512|1024|2048) {
+        return Err("UV kurtarma profili veya çözünürlük geçersiz".into());
+    }
+    let asset=state.asset_by_id(&asset_id)?;
+    if asset.material_count!=1{
+        return Err("UV kurtarma tek materyalli kaynakla sınırlı".into());
+    }
+    let dir=owned_asset_dir(&asset.file_path,&asset_id)?;
+    let original=PathBuf::from(&asset.file_path);
+    let source_sha=asset.sha256.clone();
+    let prepared=tauri::async_runtime::spawn_blocking(move ||
+        finalize_repair(&dir,&original,&source_sha,&texture_export_dir,
+                        Path::new(&version_dir),&preset,resolution)
+    ).await.map_err(|e|format!("UV kurtarma görevi başarısız: {e}"))??;
+    register_repair(&state,&asset,prepared)
 }
 
 #[tauri::command]
@@ -359,26 +640,7 @@ pub async fn repair_asset_uv(
     let prepared=tauri::async_runtime::spawn_blocking(move ||
         background_repair(dir,original_path,sha,texture_export_dir,exe,resolution,seam_angle,preset.clone(),weld)
     ).await.map_err(|e|format!("UV Repair worker hatası: {e}"))??;
-    let report=&prepared.report;
-    let new_asset=state.store_asset(&prepared.source,
-        &format!("{} · UV Clean",asset.title), &asset.engine,
-        json!({"origin":"uv-repair","parentAssetId":asset_id,"parentSha256":asset.sha256,
-               "repairVersion":prepared.version,
-               "repairReport":report,
-               "manualUvBlend":"Repair_Working.blend",
-               "originalImmutable":true}))?;
-    let uv=report.get("uv").ok_or("UV report missing")?;
-    Ok(UvRepairResult {
-        asset:new_asset,
-        version_dir:prepared.version.to_string_lossy().into_owned(),
-        report_path:prepared.version.join("Repair_Report.json").to_string_lossy().into_owned(),
-        working_blend:prepared.version.join("Repair_Working.blend").to_string_lossy().into_owned(),
-        uv_layout:prepared.version.join("UV_Layout.svg").to_string_lossy().into_owned(),
-        strategy:uv.get("strategy").and_then(Value::as_str).unwrap_or("unknown").into(),
-        old_islands:uv.get("oldUVIslands").and_then(Value::as_u64).unwrap_or(0),
-        new_islands:uv.get("newUVIslands").and_then(Value::as_u64).unwrap_or(0),
-        source_untouched:true,
-    })
+    register_repair(&state,&asset,prepared)
 }
 
 #[cfg(test)]
@@ -401,27 +663,33 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]fn rejects_bad_blender_report_with_exact_observed_values() {
+    #[test]fn strict_report_allows_only_proven_zero_area_source_face() {
         let path=Path::new("example/uv_repairs/uuid");
-        let good=json!({"sourceUntouched":true,"trianglesBefore":7998,
-            "trianglesAfter":7998,"uv":{"oldUVIslands":168,"newUVIslands":18}});
-        assert_eq!(verify_repair_report(&good,7998,path).unwrap(),(168,18));
-        let bad=json!({"sourceUntouched":true,"trianglesBefore":7996,
-            "trianglesAfter":7996,"uv":{"oldUVIslands":168,"newUVIslands":18}});
-        let error=verify_repair_report(&bad,7998,path).unwrap_err();
-        assert!(error.contains("Kaynak GLB triangles=7998"));
-        assert!(error.contains("trianglesBefore=Some(7996)"));
-        assert!(error.contains("trianglesAfter=Some(7996)"));
-        assert!(error.contains("Repair_Report.json"));
-        let missing=json!({"sourceUntouched":true,"trianglesBefore":7998,
-            "trianglesAfter":7998,"uv":{"oldUVIslands":168}});
-        assert!(verify_repair_report(&missing,7998,path).unwrap_err()
+        let expected=SourceTriangles{declared:7994,zero_area:1,effective:7993};
+        let fox=json!({"sourceUntouched":true,"trianglesBefore":7993,
+            "trianglesAfter":7993,"uv":{"oldUVIslands":254,"newUVIslands":116}});
+        assert_eq!(verify_repair_report(&fox,&expected,path).unwrap(),(254,116,7993));
+        let no_proof=SourceTriangles{declared:7994,zero_area:0,effective:7994};
+        let err=verify_repair_report(&fox,&no_proof,path).unwrap_err();
+        assert!(err.contains("Kaynak GLB indeks üçgeni=7994"));
+        assert!(err.contains("doğrulanmış sıfır-alan üçgeni=0"));
+        let lost_during=json!({"sourceUntouched":true,"trianglesBefore":7994,
+            "trianglesAfter":7993,"uv":{"oldUVIslands":254,"newUVIslands":116}});
+        assert!(verify_repair_report(&lost_during,&expected,path).unwrap_err()
+            .contains("DURING UV repair"));
+        let missing=json!({"sourceUntouched":true,"trianglesBefore":7993,
+            "trianglesAfter":7993,"uv":{"oldUVIslands":254}});
+        assert!(verify_repair_report(&missing,&expected,path).unwrap_err()
             .contains("newUVIslands missing"));
-        let worse=json!({"sourceUntouched":true,"trianglesBefore":7998,
-            "trianglesAfter":7998,"uv":{"oldUVIslands":13,"newUVIslands":40}});
-        assert!(verify_repair_report(&worse,7998,path).unwrap_err()
+        let worse=json!({"sourceUntouched":true,"trianglesBefore":7993,
+            "trianglesAfter":7993,"uv":{"oldUVIslands":13,"newUVIslands":40}});
+        assert!(verify_repair_report(&worse,&expected,path).unwrap_err()
             .contains("greater than source"));
+        let full=json!({"sourceUntouched":true,"trianglesBefore":7994,
+            "trianglesAfter":7994,"uv":{"oldUVIslands":254,"newUVIslands":116}});
+        assert_eq!(verify_repair_report(&full,&expected,path).unwrap().2,7994);
     }
+
     #[test]fn orm_preserves_gltf_semantics_and_plush_cleanup() {
         let metal=RgbaImage::from_pixel(1,1,Rgba([150,150,150,255]));
         let rough=RgbaImage::from_pixel(1,1,Rgba([35,35,35,255]));

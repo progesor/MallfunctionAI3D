@@ -60,6 +60,14 @@ export interface UnityExportResult {
 }
 export interface UnityExportSummary { outputDir: string; generatedAt: string; triangles: [number, number, number] }
 export type UvRepairPreset = 'preserve' | 'plush';
+export interface RecoverableUvRepair {
+  versionDir: string;
+  profile: UvRepairPreset;
+  resolution: number;
+  oldIslands: number;
+  newIslands: number;
+  inputTriangles: number;
+}
 export interface UvRepairResult {
   asset: Asset;
   versionDir: string;
@@ -125,6 +133,13 @@ export const bridge = {
     resolution: number, seamAngle: number, weld: boolean) => invoke<UvRepairResult>('repair_asset_uv', {
     assetId, textureExportDir, preset, resolution, seamAngle, weld,
   }),
+  uvRepairAttempts: (assetId: string) =>
+    invoke<RecoverableUvRepair[]>('list_uv_repair_attempts', { assetId }),
+  resumeUVRepair: (assetId: string, versionDir: string, textureExportDir: string,
+    preset: UvRepairPreset, resolution: number) =>
+    invoke<UvRepairResult>('resume_uv_repair', {
+      assetId, versionDir, textureExportDir, preset, resolution,
+    }),
   blenderDetect: () => invoke<string | null>('blender_detect'),
   pickImage: () => open({ multiple: false, directory: false, filters: [{ name: 'Reference image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] }),
   pickGlb: () => open({ multiple: false, directory: false, filters: [{ name: 'glTF Binary', extensions: ['glb'] }] }),

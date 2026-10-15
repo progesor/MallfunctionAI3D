@@ -50,7 +50,11 @@ class UVRepairContractTest(unittest.TestCase):
         self.assertIn('state.store_asset(&prepared.source', rust)
         self.assertIn("verify_sha256(&file_path,&source_sha)", rust)
         self.assertIn("fn verify_repair_report(", rust)
-        self.assertIn("Blender trianglesBefore=", rust)
+        self.assertIn("doğrulanmış sıfır-alan üçgeni=", rust)
+        self.assertIn("fn finalize_repair(", rust)
+        self.assertIn("fn list_uv_repair_attempts(", rust)
+        self.assertIn("fn resume_uv_repair(", rust)
+        self.assertIn("audit_source_triangles(&original)", rust)
         self.assertIn("new UV island count is greater than source count", rust)
 
 

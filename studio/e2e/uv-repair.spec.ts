@@ -17,9 +17,9 @@ function simpleGlb():string {
   return bytes.toString('base64');
 }
 
-async function openStudio(page:import('@playwright/test').Page, ready:boolean) {
+async function openStudio(page:import('@playwright/test').Page, ready:boolean, recovery=false) {
   const base64=simpleGlb();
-  await page.addInitScript(({asset,base64,ready})=>{
+  await page.addInitScript(({asset,base64,ready,recovery})=>{
     const calls:unknown[]=[];
     (window as unknown as {__repairCalls:unknown[]}).__repairCalls=calls;
     (window as unknown as {__TAURI_INTERNALS__:unknown}).__TAURI_INTERNALS__={
@@ -35,6 +35,16 @@ async function openStudio(page:import('@playwright/test').Page, ready:boolean) {
           case 'list_unity_exports':return [];
           case 'list_asset_texture_exports':return ready?
             [{outputDir:'C:\\Test\\texture_exports\\pbr_1024',preset:'1024',generatedAt:'2026-10-15',mapCount:5}]:[];
+          case 'list_uv_repair_attempts':return recovery ? [{
+            versionDir:'C:\\Test\\uv_repairs\\641e3869-4357-40dc-a543-bdce90bd3ece',
+            profile:'preserve',resolution:1024,oldIslands:254,newIslands:116,inputTriangles:7993
+          }] : [];
+          case 'resume_uv_repair':
+            calls.push({resume:args});
+            return {asset:{...asset,id:'fe996cde-4e2f-462a-8b57-0aa5cb221122',title:'PLAYBOX Fox Plush · UV Clean'},
+              versionDir:String(args?.versionDir),reportPath:'C:\\Test\\uv_repairs\\v2\\Repair_Report.json',
+              workingBlend:'C:\\Test\\uv_repairs\\v2\\Repair_Working.blend',uvLayout:'C:\\Test\\uv_repairs\\v2\\UV_Layout.svg',
+              strategy:'curvature-seams-angle-unwrap',oldIslands:254,newIslands:116,sourceUntouched:true};
           case 'repair_asset_uv':
             calls.push(args);
             return {asset:{...asset,id:'e33aca7a-61fe-49b1-a885-e23f6f97e7ef',title:'PLAYBOX Fox Plush · UV Clean'},
@@ -45,7 +55,7 @@ async function openStudio(page:import('@playwright/test').Page, ready:boolean) {
         }
       }
     };
-  },{asset,base64,ready});
+  },{asset,base64,ready,recovery});
   await page.goto('/');
   await page.getByRole('button',{name:/Asset Library/}).click();
   await page.getByRole('button',{name:/PLAYBOX Fox Plush/}).first().click();
@@ -72,4 +82,17 @@ test('one-click UV repair preserves existing source and exposes optional overrid
   expect(calls).toEqual([{assetId:asset.id,textureExportDir:'C:\\Test\\texture_exports\\pbr_1024',
     preset:'plush',resolution:1024,seamAngle:78,weld:true}]);
   await expect(page.locator('.viewport-frame')).toBeVisible();
+});
+
+test('can resume completed 5-map bake without launching Blender or a new UV job',async({page})=>{
+  await openStudio(page,true,true);
+  await expect(page.getByTestId('uv-repair-recovery')).toBeVisible();
+  await expect(page.getByTestId('uv-resume-button')).toBeEnabled();
+  await page.getByTestId('uv-resume-button').click();
+  await expect(page.getByTestId('uv-repair-success')).toBeVisible();
+  await expect(page.getByText(/254 → 116/)).toBeVisible();
+  const calls=await page.evaluate(()=>(window as unknown as {__repairCalls:unknown[]}).__repairCalls);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).toMatchObject({resume:{assetId:asset.id,preset:'preserve',resolution:1024,
+    textureExportDir:'C:\\Test\\texture_exports\\pbr_1024'}});
 });

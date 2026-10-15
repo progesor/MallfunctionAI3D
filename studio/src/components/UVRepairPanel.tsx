@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Check, ChevronDown, Clipboard, Layers3, LoaderCircle, Wrench } from 'lucide-react';
 import { bridge } from '../lib/bridge';
-import type { Asset, TextureExportSummary, UvRepairResult, UvRepairPreset } from '../lib/bridge';
+import type { Asset, TextureExportSummary, UvRepairResult, UvRepairPreset, RecoverableUvRepair } from '../lib/bridge';
 
 interface Props {
   asset: Asset;
@@ -23,6 +23,8 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
   const [advanced,setAdvanced] = useState(false);
   const [result,setResult] = useState<UvRepairResult|null>(null);
   const [error,setError] = useState('');
+  const [recoverable,setRecoverable] = useState<RecoverableUvRepair[]>([]);
+  const [chosenRecovery,setChosenRecovery] = useState('');
 
   useEffect(()=>{
     let alive=true;
@@ -34,6 +36,21 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
     }).catch(err=>{if(alive)setError('Texture Export listesi: '+String(err));})
       .finally(()=>{if(alive)setLoading(false);});
     return ()=>{alive=false;};
+  },[asset.id,revision]);
+
+  async function refreshRecoverable() {
+    try {
+      const attempts=await bridge.uvRepairAttempts(asset.id);
+      setRecoverable(attempts);
+    } catch {
+      setRecoverable([]);
+    }
+  }
+  useEffect(()=>{
+    setRecoverable([]);setChosenRecovery('');
+    void refreshRecoverable();
+    // Asset and export history changes should refresh recoverable runs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   },[asset.id,revision]);
 
   async function run() {
@@ -49,7 +66,30 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
       setResult(repaired);
       await onCreated();
     } catch(err) {setError('UV/PBR onarımı: '+String(err));}
-    finally{setBusy(false);}
+    finally{setBusy(false);void refreshRecoverable();}
+  }
+
+  const matches = recoverable.filter(a=>a.profile===preset && a.resolution===resolution);
+  const recovery = matches.find(a=>a.versionDir===chosenRecovery) ?? matches[0];
+
+  async function resume() {
+    if (!selected || !recovery || busy || !canRepair) return;
+    setBusy(true);setError('');setResult(null);
+    try {
+      const repaired=await bridge.resumeUVRepair(
+        asset.id,recovery.versionDir,selected,preset,resolution);
+      if (!repaired.sourceUntouched || repaired.newIslands<1 ||
+          repaired.newIslands>repaired.oldIslands || repaired.asset.id===asset.id) {
+        throw new Error('Kurtarılmış UV varlığı kabul kontrolünü geçmedi.');
+      }
+      setResult(repaired);
+      await onCreated();
+    } catch(err) {
+      setError('Önceki UV bake kurtarma: '+String(err));
+    } finally {
+      setBusy(false);
+      void refreshRecoverable();
+    }
   }
 
   async function copy(value:string) {
@@ -95,6 +135,22 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
       {busy?<LoaderCircle className="spin" size={15}/>:<Layers3 size={15}/>}
       {busy?'Blender UV ve 5 PBR map hazırlıyor…':'Otomatik UV + PBR Onar'}
     </button>
+    {matches.length>0&&<div className="uv-repair-recovery" data-testid="uv-repair-recovery">
+      <strong><Check size={14}/> Önceki Blender bake dosyaları bulundu</strong>
+      <p className="block-description">Mevcut 5 PBR PNG ve UV'yi tekrar üretmeden doğrulayarak yeni asset oluştur. Gerçek bir geometri kaybı varsa işlem yine durur.</p>
+      <label className="unity-export-select"><span>KURTARILACAK SÜRÜM</span><div>
+        <select aria-label="Önceki UV onarım sürümü" value={recovery?.versionDir??''}
+          disabled={busy} onChange={e=>setChosenRecovery(e.target.value)}>
+          {matches.map(a=><option key={a.versionDir} value={a.versionDir}>
+            {a.versionDir.split(/[\\/]/).pop()?.slice(0,8)} · UV {a.oldIslands} → {a.newIslands} · {a.inputTriangles} tris
+          </option>)}
+        </select><ChevronDown size={13}/></div></label>
+      <button type="button" data-testid="uv-resume-button" className="btn btn-outline btn-full"
+        disabled={!enabled} onClick={()=>void resume()}>
+        {busy?<LoaderCircle className="spin" size={15}/>:<Layers3 size={15}/>}
+        Önceki bake'i tamamla (Blender çalışmaz)
+      </button>
+    </div>}
     {!versions.length&&!loading&&<p className="mini-disclaimer">Önce yukarıdan 5 PBR haritasını dışa aktar; ardından onarım tek işlemde çalışır.</p>}
     {asset.materialCount!==1&&<p className="mini-disclaimer">v1 yalnız tek materyalli statik ürünlerde çalışır.</p>}
     {!canRepair&&<p className="mini-disclaimer">LOD önizlemesinden SRC görünümüne dön.</p>}

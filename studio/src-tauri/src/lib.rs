@@ -7,6 +7,7 @@ mod texture_export;
 mod unity_export;
 mod unity_native;
 mod uv_repair;
+mod uv_triangle_audit;
 
 use tauri::Manager;
 
@@ -33,6 +34,8 @@ pub fn run() {
             unity_native::export_unity_native,
             unity_native::check_unity_import,
             uv_repair::repair_asset_uv,
+            uv_repair::list_uv_repair_attempts,
+            uv_repair::resume_uv_repair,
             commands::read_reference_preview,
             commands::move_asset_to_trash,
             commands::get_asset_manifest,
