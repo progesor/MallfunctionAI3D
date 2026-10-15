@@ -145,3 +145,37 @@ quality, not merely creating a new texture.
   artifact repair, with holdout and visual acceptance tests.
 - Calibrate on at least Fox plus an unrelated electronic/furniture
   prop to avoid overfitting a single model.
+
+## M3.0 Windows Rust decimal-literal hotfix (15 October 2026)
+
+The user's second-workstation Cargo build stopped in
+`texture_seam_geometry.rs` and `texture_seam_pixels.rs`:
+Rust numeric literals `.10`, `.15`, etc. lack a mandatory integer part.
+Exactly **24** such literals appeared in two synthetic Rust unit tests.
+Production seam processing was not reached. All 24 now use `0.10`,
+`0.15`, etc. No PBR/GLB algorithm or user's UVRepairPanel.tsx bracket
+fix was changed.
+
+A dependency-free Node guard in
+`studio/scripts/check-rust-literals.mjs` now scans Rust modules before
+the Vite frontend starts. The same check runs with
+`npm run check:syntax` and `npm run check:rust-literals`.
+It ignores valid tuple-index expressions like `foo?.0` and `pixel.0`.
+It is a narrow safeguard, **not** a complete Rust parser; `cargo check`
+and `cargo test` on the Windows workstation remain necessary.
+
+Local manual validation (GitHub CI intentionally NOT run):
+
+    cd C:\Works\MallfunctionAI3D
+    git pull --ff-only
+    cd studio
+    npm run check:rust-literals
+    npm run check:syntax
+    cargo check --manifest-path src-tauri/Cargo.toml
+    cargo test --manifest-path src-tauri/Cargo.toml --lib texture_seam
+    cargo test --manifest-path src-tauri/Cargo.toml --lib texture_surface
+    cd ..
+    .\05_Start-Studio.ps1
+
+No Blender, ComfyUI, Unity, original GLB or archived texture maps need
+to be deleted or regenerated for this source-only fix.

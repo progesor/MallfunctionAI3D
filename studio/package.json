@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node scripts/check-jsx-syntax.mjs && vite --host 127.0.0.1",
-    "check:syntax": "node scripts/check-jsx-syntax.mjs",
+    "dev": "node scripts/check-rust-literals.mjs && node scripts/check-jsx-syntax.mjs && vite --host 127.0.0.1",
+    "check:syntax": "node scripts/check-rust-literals.mjs && node scripts/check-jsx-syntax.mjs",
+    "check:rust-literals": "node scripts/check-rust-literals.mjs --self-test",
     "build": "tsc --noEmit && vite build",
     "test:adapter": "node --experimental-strip-types src/tests/workflow.test.mjs && node --experimental-strip-types src/tests/pilot.test.mjs && node --experimental-strip-types src/tests/api-workflow.test.mjs && node --experimental-strip-types --test src/tests/glb-inspector.test.mjs && node --experimental-strip-types --test src/tests/texture-export.test.mjs && node --experimental-strip-types --test src/tests/png-encode.test.mjs",
     "tauri": "tauri",

@@ -188,8 +188,8 @@ pub(crate) fn blend_seams(src:&RgbaImage, pairs:&[SeamPair],
 mod tests{
     use super::*;
     #[test]fn matches_similar_seam_and_rejects_hard_mismatch(){
-        let side_a=SeamSide{start:[.15,.20],end:[.15,.80],inside:[.40,.50],normal:[0.,0.,1.]};
-        let side_b=SeamSide{start:[.65,.20],end:[.65,.80],inside:[.90,.50],normal:[0.,0.,1.]};
+        let side_a=SeamSide{start:[0.15,0.20],end:[0.15,0.80],inside:[0.40,0.50],normal:[0.,0.,1.]};
+        let side_b=SeamSide{start:[0.65,0.20],end:[0.65,0.80],inside:[0.90,0.50],normal:[0.,0.,1.]};
         let pair=SeamPair{left:side_a,right:side_b};
         let mut image=RgbaImage::from_pixel(64,64,Rgba([100,100,100,255]));
         for y in 0..64 {for x in 32..64{
