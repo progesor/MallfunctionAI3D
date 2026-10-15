@@ -289,6 +289,9 @@ fn verify_repair_report_mode(
 }
 
 
+// Compatibility wrapper is exercised only by the in-module regression tests.
+// Production validation calls verify_repair_report_mode directly.
+#[cfg(test)]
 fn verify_repair_report(
     report:&Value, audit:&SourceTriangles, version:&Path,
     approve_one_import_face_loss:bool,
