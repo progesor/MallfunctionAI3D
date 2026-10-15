@@ -158,6 +158,10 @@ class FakeBlender:
             "evaluate_plan": evaluate_plan,
             "select_bake_candidate": select_bake_candidate,
             "select_diagnostic_candidate": select_diagnostic_candidate,
+            "apply_xatlas_uv": lambda *args: {
+                "available":False,"engine":"xatlas",
+                "reason":"Optional xatlas intentionally absent in mock"
+            },
         }
         exec(compile(program, str(WORKER), "exec"), context)
         return context["new_uv"]
@@ -170,7 +174,8 @@ class UVModeSwitchRegression(unittest.TestCase):
         old, clean, report = fake.compile_new_uv()(target, 62, 24, 1024)
         self.assertEqual(old, "UVMap")
         self.assertEqual(clean, "AI3D_Clean")
-        self.assertEqual(report["strategy"], "curvature-seams-preflight-accepted")
+        self.assertEqual(report["strategy"], "multi-engine-preflight-accepted")
+        self.assertEqual(report["engine"], "blender-angle")
         self.assertTrue(report["accepted"])
         self.assertEqual(report["seamAngleDeg"], 38)
         self.assertEqual(len(report["triedPlans"]), 5)

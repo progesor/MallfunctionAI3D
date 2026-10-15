@@ -43,6 +43,8 @@ from uv_texture_fidelity import (
 from uv_planner import (
     evaluate_plan, select_bake_candidate, select_diagnostic_candidate,
 )
+from uv_topology_blender import rebuild_exact_topology_work_copy
+from uv_provider_xatlas import apply_xatlas_uv
 
 MAPS = ("baseColor", "normal", "metallic", "roughness", "occlusion")
 
@@ -313,6 +315,9 @@ def new_uv(target, angle, margin_px, resolution):
         angle, max(20, angle - 12), max(20, angle - 24),
         max(20, angle - 36), max(20, angle - 48),
     ]))
+    provider_status = {"engine": "xatlas", "available": False,
+                       "reason": "Optional module not installed"}
+    xatlas_uv_snapshot = None
     for threshold in angles:
         try:
             candidate = unwrap_threshold(threshold)
@@ -329,27 +334,88 @@ def new_uv(target, angle, margin_px, resolution):
             last_error = "UV preflight rejected {}°: {}".format(
                 threshold, "; ".join(candidate["reasons"]))
 
+    # A MIT-licensed xatlas adapter may contribute another atlas candidate.
+    # No network/pip install occurs during a bake; if the Blender Python
+    # module is missing, the normal Blender candidates still run.
+    try:
+        provider_status = apply_xatlas_uv(target.data, clean_name)
+        if provider_status["available"]:
+            live = target.data.uv_layers.get(clean_name)
+            xatlas_uv_snapshot = [
+                (float(item.uv[0]), float(item.uv[1]))
+                for item in live.data
+            ]
+            new_count = uv_island_count(target.data, clean_name)
+            metrics = mesh_uv_stretch(target.data, clean_name)
+            if xatlas_uv_snapshot:
+                uu = [u for u, _ in xatlas_uv_snapshot]
+                vv = [v for _, v in xatlas_uv_snapshot]
+                valid_bounds = all(
+                    math.isfinite(u) and math.isfinite(v) and
+                    -0.001 <= u <= 1.001 and -0.001 <= v <= 1.001
+                    for u, v in xatlas_uv_snapshot
+                ) and max(uu)-min(uu)>0.2 and max(vv)-min(vv)>0.2
+            else:
+                valid_bounds = False
+            xatlas_candidate = evaluate_plan(old_count, source_stretch, {
+                "engine": "xatlas",
+                "seamAngleDeg": None,
+                "seamEdges": None,
+                "connectedComponents": None,
+                "newUVIslands": new_count,
+                "rebuiltStretch": metrics,
+                "p95Anisotropy": metrics["p95Anisotropy"],
+                "maximumAnisotropy": metrics["maximumAnisotropy"],
+                "degenerateUvTriangles": metrics.get("degenerateUvTriangles",0),
+                "validBounds": valid_bounds,
+            })
+            attempted.append(xatlas_candidate)
+    except Exception as exc:
+        provider_status = {
+            "engine": "xatlas", "available": False,
+            "reason": "Candidate rejected safely: " + str(exc),
+        }
+        xatlas_uv_snapshot = None
+
     # Never pick a candidate that is only 'best of bad' and then spend GPU
     # minutes on five Cycles bakes. Previous Smart UV fallback fragmented
     # the user's 262-island Fox into 1733 UV islands.
     winning = select_bake_candidate(attempted)
     if winning is not None:
-        # Reapply exactly once so source UVs, seam flags and report correspond
-        # to the atlas selected by the quality gate.
-        winner = unwrap_threshold(winning["seamAngleDeg"])
-        if not winner["passesPreflight"]:
-            raise RuntimeError("Accepted UV plan changed on reproduction")
+        if winning.get("engine") == "xatlas":
+            if xatlas_uv_snapshot is None:
+                raise RuntimeError("xatlas winner UV data lost")
+            live = target.data.uv_layers.get(clean_name)
+            if len(live.data) != len(xatlas_uv_snapshot):
+                raise RuntimeError("xatlas UV corner mapping changed")
+            for i, (u, v) in enumerate(xatlas_uv_snapshot):
+                live.data[i].uv = (u, v)
+            target.data.uv_layers.active = live
+            live.active_render = True
+            winner = dict(winning)
+            if uv_island_count(target.data, clean_name) != winner["newUVIslands"]:
+                raise RuntimeError("xatlas UV chart count changed on activation")
+            engine = "xatlas"
+        else:
+            # Reapply the chosen Blender threshold to restore selected seams
+            # and UVs after trying other candidates.
+            winner = unwrap_threshold(winning["seamAngleDeg"])
+            if not winner["passesPreflight"]:
+                raise RuntimeError("Accepted UV plan changed on reproduction")
+            engine = "blender-angle"
         return old_name, clean_name, {
-            "strategy": "curvature-seams-preflight-accepted",
+            "strategy": "multi-engine-preflight-accepted",
+            "engine": engine,
             "accepted": True,
-            "seamAngleDeg": winner["seamAngleDeg"],
-            "seamEdges": winner["seamEdges"],
-            "connectedComponents": winner["connectedComponents"],
+            "seamAngleDeg": winner.get("seamAngleDeg"),
+            "seamEdges": winner.get("seamEdges"),
+            "connectedComponents": winner.get("connectedComponents"),
             "oldUVIslands": old_count,
             "newUVIslands": winner["newUVIslands"],
             "sourceStretch": source_stretch,
             "rebuiltStretch": winner["rebuiltStretch"],
             "stretchGate": winner["stretchGate"],
+            "providerStatus": provider_status,
             "triedPlans": attempted,
             "selectionReason": "islands-reduced-and-source-relative-stretch-passed",
         }
@@ -359,7 +425,12 @@ def new_uv(target, angle, margin_px, resolution):
     diagnostic = select_diagnostic_candidate(attempted, old_count)
     if diagnostic is not None:
         try:
-            diagnostic = unwrap_threshold(diagnostic["seamAngleDeg"])
+            if diagnostic.get("engine") == "xatlas" and xatlas_uv_snapshot is not None:
+                live = target.data.uv_layers.get(clean_name)
+                for i, coords in enumerate(xatlas_uv_snapshot):
+                    live.data[i].uv = coords
+            else:
+                diagnostic = unwrap_threshold(diagnostic["seamAngleDeg"])
         except Exception as exc:
             last_error = str(exc)
     best_count = (diagnostic.get("newUVIslands")
@@ -376,6 +447,7 @@ def new_uv(target, angle, margin_px, resolution):
         "reason": last_error or
                   "No candidate both reduced islands and preserved UV stretch",
         "diagnosticOnly": True,
+        "providerStatus": provider_status,
         "warning": "No Cycles bake; no Smart UV fallback; source unchanged",
     }
 
@@ -813,6 +885,18 @@ def main():
     source_path = args.input.resolve(strict=True)
     input_dir = args.source_maps.resolve(strict=True)
     output = args.output.resolve()
+    # App-managed, EXPLICITLY installed optional xatlas Python 3.13 plugin.
+    # Blender 5.1 disables user-site packages, so only the app's
+    # documented opt-in directory is added. No implicit downloads.
+    library_root = output.parents[3] if len(output.parents) >= 4 else None
+    if library_root is not None:
+        plugin_dir = library_root / "plugins" / "xatlas"
+        if plugin_dir.is_dir():
+            plugin_native = str(plugin_dir)
+            if plugin_native.startswith("\\\\?\\"):
+                plugin_native = plugin_native[4:]
+            if plugin_native not in sys.path:
+                sys.path.insert(0, plugin_native)
     if not output.is_dir():
         raise ValueError("Output version directory must already exist")
     if output in source_path.parents or source_path in output.parents:
@@ -885,20 +969,31 @@ def main():
     # Keep a safe baseline and RECORD failures; previous releases silently
     # ignored rejected welds, leaving thousands of disconnected mesh islands.
     if args.weld:
-        backup = target.data.copy()
-        weld_diagnostics["reason"] = "attempted"
+        stage("rebuild_exact_topology")
         try:
-            welded, stable = attempt_safe_weld(target.data)
+            weld_diagnostics = rebuild_exact_topology_work_copy(
+                target, REFERENCE_FACE_ID)
+            welded = int(weld_diagnostics["weldedVertices"])
         except Exception as exc:
-            target.data = backup
-            welded = 0
-            weld_diagnostics["reason"] = "rejected: " + str(exc)
-        else:
-            if stable:
-                bpy.data.meshes.remove(backup)
-                weld_diagnostics["applied"] = True
-                weld_diagnostics["weldedVertices"] = welded
-                weld_diagnostics["reason"] = "passed triangle/bounds checks"
+            # A failure to recover connectivity is a geometry preflight
+            # failure. Never mask it with a 1733-island Smart UV retry.
+            weld_diagnostics["reason"] = "topology-rebuild-rejected: " + str(exc)
+            no_weld_report = {
+                "schemaVersion": 2, "sourceUntouched": True,
+                "acceptedForBake": False,
+                "weld": weld_diagnostics,
+                "sourceTriangleCountInBlender": before_triangles,
+                "sourceMeshHealth": original_health,
+                "sourceFormat": "static-triangulated",
+            }
+            (output / "UV_Plan.json").write_text(
+                json.dumps(no_weld_report, ensure_ascii=False, indent=2)+"\n",
+                encoding="utf-8")
+            print("AI3D_UV_PREFLIGHT:TOPOLOGY_REJECTED", flush=True)
+            raise RuntimeError(
+                "UV_PREFLIGHT_REJECTED: Exact topology rebuild could not "
+                "preserve UV/normal data. 0/5 PBR bakes run. Details: {}. "
+                "Original GLB untouched.".format(output / "UV_Plan.json"))
     stage("auto_unwrap")
     old_uv, new_uv_name, uv_report = new_uv(target, args.angle, args.margin, args.resolution)
     preflight = {

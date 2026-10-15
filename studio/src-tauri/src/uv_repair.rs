@@ -18,6 +18,11 @@ use uuid::Uuid;
 const WORKER: &str = include_str!("../../../blender/repair_uv_pbr.py");
 const FIDELITY_WORKER: &str = include_str!("../../../blender/uv_texture_fidelity.py");
 const UV_PLANNER_WORKER: &str = include_str!("../../../blender/uv_planner.py");
+const TOPOLOGY_WORKER: &str = include_str!("../../../blender/uv_topology.py");
+const TOPOLOGY_ADAPTER_WORKER: &str =
+    include_str!("../../../blender/uv_topology_blender.py");
+const XATLAS_ADAPTER_WORKER: &str =
+    include_str!("../../../blender/uv_provider_xatlas.py");
 const ROLES: [&str;5] = ["baseColor", "normal", "metallic", "roughness", "occlusion"];
 
 #[derive(Serialize)]
@@ -728,6 +733,18 @@ fn background_repair(
     fs::write(&planner_worker,UV_PLANNER_WORKER).map_err(|e|format!(
         "UV plan ön kontrol modülü yazılamadı: {}: {e}",
         planner_worker.display()))?;
+    // Provider registry is version-pinned with each UV repair output.
+    // Built-in Blender topo adapter is always available; MIT xatlas is
+    // optional and never downloaded or installed by the worker.
+    for (name,content) in [
+        ("uv_topology.py",TOPOLOGY_WORKER),
+        ("uv_topology_blender.py",TOPOLOGY_ADAPTER_WORKER),
+        ("uv_provider_xatlas.py",XATLAS_ADAPTER_WORKER),
+    ] {
+        let destination=version.join(name);
+        fs::write(&destination,content).map_err(|e|format!(
+            "UV motoru dosyası yazılamadı: {}: {e}",destination.display()))?;
+    }
     // Do not clean up failed version automatically: Blender log/checkpoints
     // are the diagnostic evidence. No original files are modified.
     let execution=Command::new(&blender).arg("-b")

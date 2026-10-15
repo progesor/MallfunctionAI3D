@@ -132,11 +132,11 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
   const enabled=canRepair && asset.materialCount===1 && !!selected && !loading && !busy;
   return <section className="uv-repair-panel" aria-label="Auto UV ve PBR Repair" data-testid="uv-repair-panel">
     <div className="card-heading"><div><Wrench size={16}/><strong>Auto UV + Texture Repair</strong></div></div>
-    <p className="block-description">Mesh korunarak UV atlası ve 5 PBR haritası hazırlanır.
-      Renk/Metallic/Roughness/AO dokuları aynı 3D yüzey noktalarında karşılaştırılır.
-      Önce UV adası ve gerilme ön kontrolü yapılır; uygun plan yoksa
-      <strong> beş PBR haritası bake edilmeden</strong> UV_Plan.json raporu hazırlanır.
-      Kalite eşiklerini geçmeyen sonuç otomatik arşive eklenmez; kaynak değişmez.</p>
+    <p className="block-description">Tüm statik modeller için: UV dikişlerinde ayrılan
+      vertex bağlantıları kontrollü biçimde yeniden kurulur; kaynak UV/normal korunur.
+      Blender ve kuruluysa isteğe bağlı xatlas UV adayları aynı kalite kapısından geçer.
+      Uygun plan bulunamazsa <strong>5 PBR map bake edilmeden</strong>
+      UV_Plan.json raporu hazırlanır. Orijinal mesh ve texture arşivi değişmez.</p>
     <label className="unity-export-select"><span>PBR KAYNAĞI</span><div><select
       aria-label="UV Repair PBR sürümü" value={selected} disabled={busy||loading}
       onChange={e=>{setSelected(e.target.value);setResult(null);}}>
