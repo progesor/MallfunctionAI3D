@@ -14,6 +14,8 @@ interface Props {
   onOpen: (asset: Asset) => Promise<void>;
 }
 
+export const UV_RUNTIME_REVISION = 'M2.7.1-PROXY-XATLAS' as const;
+
 export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props) {
   const [versions,setVersions] = useState<TextureExportSummary[]>([]);
   const [selected,setSelected] = useState('');
@@ -26,6 +28,7 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
   const [safeCleanup,setSafeCleanup] = useState(true);
   const [uvEngine,setUvEngine] = useState<UvEngineMode>('both');
   const [engineStatus,setEngineStatus] = useState<UvEngineStatus|null>(null);
+  const [runtimeError,setRuntimeError] = useState('');
   const [installingXatlas,setInstallingXatlas] = useState(false);
   const [advanced,setAdvanced] = useState(false);
   const [result,setResult] = useState<UvRepairResult|null>(null);
@@ -38,9 +41,12 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
   useEffect(()=>{
     let alive=true;
     void bridge.uvEngineStatus().then(status=>{
-      if(alive)setEngineStatus(status);
+      if(alive){setEngineStatus(status);setRuntimeError('');}
     }).catch(err=>{
-      if(alive)setError('UV motorları denetlenemedi: '+String(err));
+      if(alive){
+        setRuntimeError(String(err));
+        setError('UV motorları denetlenemedi: '+String(err));
+      }
     });
     return ()=>{alive=false;};
   },[]);
@@ -163,11 +169,28 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
     catch {setError('Klasör yolu panoya kopyalanamadı.');}
   }
 
+  const runtimeOk=engineStatus?.backendRevision===UV_RUNTIME_REVISION &&
+    engineStatus?.proxyWorkerReady===true;
   const enabled=canRepair && asset.materialCount===1 && !!selected &&
-    !loading && !busy && !installingXatlas &&
+    !loading && !busy && !installingXatlas && runtimeOk &&
     (uvEngine!=='xatlas' || engineStatus?.xatlasReady===true);
   return <section className="uv-repair-panel" aria-label="Auto UV ve PBR Repair" data-testid="uv-repair-panel">
     <div className="card-heading"><div><Wrench size={16}/><strong>Auto UV + Texture Repair</strong></div></div>
+    <p className="uv-runtime-version" data-testid="uv-runtime-version" role="status">
+      UI {UV_RUNTIME_REVISION} · Backend {engineStatus?.backendRevision ?? 'yükleniyor'}
+      {engineStatus?.workerSha256 ? ' · Worker '+engineStatus.workerSha256.slice(0,10) : ''}
+    </p>
+    {runtimeError && <p role="alert" className="unity-export-error"
+      data-testid="uv-runtime-mismatch">
+      UV backend komutu başarısız: {runtimeError}. Eski Tauri sürümünü
+      kapatıp güncel feature dalından yeniden başlat.
+    </p>}
+    {engineStatus && !runtimeOk &&
+      <p role="alert" className="unity-export-error" data-testid="uv-runtime-mismatch">
+        UV motoru sürümleri uyuşmuyor. Eski Tauri backend veya
+        yanlış Git dalı çalışıyor. Kaynak modeli korumak için yeni UV işlemi
+        engellendi. Studio'yu kapatıp güncel feature dalından yeniden başlat.
+      </p>}
     <p className="block-description">Tüm statik modeller için: UV dikişlerinde ayrılan
       vertex bağlantıları kontrollü biçimde yeniden kurulur; kaynak UV/normal korunur.
       Blender ve kuruluysa isteğe bağlı xatlas UV adayları aynı kalite kapısından geçer.

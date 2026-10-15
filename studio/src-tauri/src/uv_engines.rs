@@ -5,6 +5,7 @@
 use crate::blender::find_blender;
 use crate::storage::{StudioResult,StudioState};
 use serde::Serialize;
+use sha2::{Digest,Sha256};
 use std::{fs,path::{Path,PathBuf},process::Command};
 use tauri::State;
 
@@ -16,8 +17,24 @@ pub struct UvEngineStatus {
     pub python_version: Option<String>,
     pub plugin_path: String,
     pub message: String,
+    pub backend_revision: String,
+    pub worker_sha256: String,
+    pub proxy_worker_ready: bool,
 }
 
+// Visible build handshake: versioned BOTH in Rust and TS panel. The
+// included worker checksum is derived from the exact compiler-embedded
+// Python bytes so a stale Tauri binary cannot masquerade as current.
+pub(crate) const UV_RUNTIME_REVISION:&str="M2.7.1-PROXY-XATLAS";
+const WORKER_SOURCE:&str=include_str!("../../../blender/repair_uv_pbr.py");
+fn worker_sha256()->String {
+    format!("{:x}",Sha256::digest(WORKER_SOURCE.as_bytes()))
+}
+fn worker_has_proxy()->bool {
+    WORKER_SOURCE.contains("stage(\"build_uv_topology_proxy\")")
+        && WORKER_SOURCE.contains("transfer_clean_uv_from_proxy(")
+        && !WORKER_SOURCE.contains("rebuild_exact_topology_work_copy(")
+}
 const PINNED_XATLAS:&str="xatlas==0.0.11";
 const INSTALLER_SCRIPT:&str=include_str!("../../../blender/install_xatlas_wheel.py");
 const XATLAS_PROBE:&str=
@@ -68,7 +85,10 @@ fn uv_status(blender:Option<String>,library:PathBuf)->StudioResult<UvEngineStatu
     let base=UvEngineStatus{
         blender_ready:blender.is_some(),xatlas_ready:false,
         python_version:None,plugin_path:plugin.to_string_lossy().into_owned(),
-        message:"Blender UV hazır; xatlas durumu kontrol edilmedi".into()
+        message:"Blender UV hazır; xatlas durumu kontrol edilmedi".into(),
+        backend_revision:UV_RUNTIME_REVISION.into(),
+        worker_sha256:worker_sha256(),
+        proxy_worker_ready:worker_has_proxy(),
     };
     let exe=match blender {Some(s)=>s,None=>return Ok(UvEngineStatus{
         message:"Blender bulunamadı; Studio Ayarlar'dan blender.exe seç".into(),..base
@@ -162,6 +182,11 @@ pub async fn install_uv_xatlas(state:State<'_,StudioState>)->StudioResult<UvEngi
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]fn worker_runtime_handshake_matches_embedded_uv_proxy(){
+        assert_eq!(UV_RUNTIME_REVISION,"M2.7.1-PROXY-XATLAS");
+        assert!(worker_has_proxy());
+        assert_eq!(worker_sha256().len(),64);
+    }
     #[test]fn xatlas_install_is_pinned_and_never_mutates_blender_site_packages(){
         assert_eq!(PINNED_XATLAS,"xatlas==0.0.11");
         assert!(XATLAS_PROBE.contains("import xatlas,numpy"));

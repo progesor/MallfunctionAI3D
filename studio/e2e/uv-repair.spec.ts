@@ -20,9 +20,10 @@ function simpleGlb():string {
 async function openStudio(
   page:import('@playwright/test').Page,ready:boolean,
   recovery: boolean | 'failed' = false,
+  staleBackend = false,
 ) {
   const base64=simpleGlb();
-  await page.addInitScript(({asset,base64,ready,recovery})=>{
+  await page.addInitScript(({asset,base64,ready,recovery,staleBackend})=>{
     const calls:unknown[]=[];
     (window as unknown as {__repairCalls:unknown[]}).__repairCalls=calls;
     (window as unknown as {__TAURI_INTERNALS__:unknown}).__TAURI_INTERNALS__={
@@ -40,11 +41,15 @@ async function openStudio(
             [{outputDir:'C:\\Test\\texture_exports\\pbr_1024',preset:'1024',generatedAt:'2026-10-15',mapCount:5}]:[];
           case 'uv_engine_status':return {blenderReady:true,
             xatlasReady:false,pythonVersion:'3.13',
+            backendRevision:staleBackend?'M2.6-STALE':'M2.7.1-PROXY-XATLAS',
+            workerSha256:'f'.repeat(64),proxyWorkerReady:!staleBackend,
             pluginPath:'C:\\Test\\plugins\\xatlas',message:'Blender hazır; xatlas kurulu değil'};
           case 'install_uv_xatlas':
             calls.push({install:'xatlas'});
             return {blenderReady:true,xatlasReady:true,pythonVersion:'3.13',
               pluginPath:'C:\\Test\\plugins\\xatlas',
+              backendRevision:staleBackend?'M2.6-STALE':'M2.7.1-PROXY-XATLAS',
+              workerSha256:'f'.repeat(64),proxyWorkerReady:!staleBackend,
               message:'Blender + xatlas 0.0.11 hazır'};
           case 'list_uv_repair_attempts':return recovery ? [{
             versionDir:'C:\\Test\\uv_repairs\\641e3869-4357-40dc-a543-bdce90bd3ece',
@@ -96,7 +101,7 @@ async function openStudio(
         }
       }
     };
-  },{asset,base64,ready,recovery});
+  },{asset,base64,ready,recovery,staleBackend});
   await page.goto('/');
   await page.getByRole('button',{name:/Asset Library/}).click();
   await page.getByRole('button',{name:/PLAYBOX Fox Plush/}).first().click();
@@ -203,5 +208,23 @@ test('xatlas engine can be installed through explicit Studio user click',async({
 test('blender-only mode does not need native xatlas installed',async({page})=>{
   await openStudio(page,true);
   await page.getByRole('combobox',{name:'UV Repair motor seçimi'}).selectOption('blender');
+  await expect(page.getByTestId('uv-repair-button')).toBeEnabled();
+});
+
+test('UI rejects stale Tauri/Blender worker before any UV bake',async({page})=>{
+  await openStudio(page,true,false,true);
+  await expect(page.getByTestId('uv-runtime-version')).toContainText('M2.6-STALE');
+  await expect(page.getByTestId('uv-runtime-mismatch')).toBeVisible();
+  await expect(page.getByTestId('uv-repair-button')).toBeDisabled();
+  await expect(page.getByRole('button',{name:'UV ve xatlas motorlarına git'})).toBeVisible();
+  const calls=await page.evaluate(()=>(window as unknown as {__repairCalls:unknown[]}).__repairCalls);
+  expect(calls).toHaveLength(0);
+});
+
+test('UV runtime status exposes correct revision and worker fingerprint',async({page})=>{
+  await openStudio(page,true);
+  await expect(page.getByTestId('uv-runtime-version')).toContainText('M2.7.1-PROXY-XATLAS');
+  await expect(page.getByTestId('uv-runtime-version')).toContainText('Worker ffffffffff');
+  await expect(page.getByTestId('uv-runtime-mismatch')).toHaveCount(0);
   await expect(page.getByTestId('uv-repair-button')).toBeEnabled();
 });

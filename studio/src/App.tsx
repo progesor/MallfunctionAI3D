@@ -316,6 +316,15 @@ function App() {
         </div>
         <div className="workspace-controls">
           <button type="button" className={`toolbar-toggle ${toolsCollapsed ? 'is-active' : ''}`} onClick={() => setToolsCollapsed(value => !value)} aria-label={toolsCollapsed ? 'Üretim panelini göster' : 'Üretim panelini gizle'} aria-pressed={toolsCollapsed} title={toolsCollapsed ? 'Sol paneli göster' : 'Sol paneli gizle'}>{toolsCollapsed ? <PanelLeftOpen size={17}/> : <PanelLeftClose size={17}/>}</button>
+          <button type="button" className="btn btn-outline uv-engine-jump"
+            aria-label="UV ve xatlas motorlarına git" title="Model seçtikten sonra sağ paneldeki UV motorlarını göster"
+            onClick={()=>{
+              setInspectorCollapsed(false);
+              window.setTimeout(() =>
+                document.querySelector('[data-testid="uv-engines"]')?.scrollIntoView({
+                  behavior:'smooth',block:'center'
+                }), 0);
+            }}><Layers3 size={15}/> UV / xatlas</button>
           <button type="button" className="btn btn-outline workspace-import" onClick={() => void importGlb()} disabled={busy}><Plus size={16}/> GLB İçe Aktar</button>
           <button type="button" className={`toolbar-toggle ${inspectorCollapsed ? 'is-active' : ''}`} onClick={() => setInspectorCollapsed(value => !value)} aria-label={inspectorCollapsed ? 'Asset Inspector panelini göster' : 'Asset Inspector panelini gizle'} aria-pressed={inspectorCollapsed} title={inspectorCollapsed ? 'Sağ paneli göster' : 'Sağ paneli gizle'}>{inspectorCollapsed ? <PanelRightOpen size={17}/> : <PanelRightClose size={17}/>}</button>
         </div>

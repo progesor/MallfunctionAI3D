@@ -493,3 +493,8 @@ button { transition: background-color .14s ease, color .14s ease, border-color .
 .uv-repair-review {display:grid;gap:8px;padding:8px 0;min-width:0;}
 .uv-repair-review .unity-export-error {margin:0;white-space:normal;overflow-wrap:anywhere;}
 .uv-repair-review .uv-repair-toggle {line-height:1.5;}
+
+/* M2.7.1 runtime version handshake and visible UV/xatlas navigation. */
+.uv-runtime-version {font-size:.69rem;overflow-wrap:anywhere;line-height:1.45;
+  color:var(--text-soft,#a5b7c5);padding:3px 0;}
+.uv-engine-jump {white-space:nowrap;}

@@ -67,6 +67,9 @@ export interface UvEngineStatus {
   pythonVersion: string | null;
   pluginPath: string;
   message: string;
+  backendRevision: string;
+  workerSha256: string;
+  proxyWorkerReady: boolean;
 }
 export interface RecoverableUvRepair {
   versionDir: string;

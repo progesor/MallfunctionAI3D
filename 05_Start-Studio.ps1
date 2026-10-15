@@ -21,7 +21,24 @@ if ($missing.Count -gt 0) {
     Write-Host 'Rust: https://rustup.rs/  |  Tauri prerequisites: https://v2.tauri.app/start/prerequisites/'
     exit 2
 }
-if ($CheckOnly) { Write-Host 'Masaustu gelistirme gereksinimleri mevcut. ComfyUI ve Blender degistirilmedi.'; exit 0 }
+# Validate checkout/worker source before Cargo or Vite starts.
+# This does not fetch, checkout, or modify any asset.
+$diag=Join-Path $base 'tools\Diagnose-Studio.ps1'
+if(-not (Test-Path -LiteralPath $diag -PathType Leaf)){
+    throw "UV sürüm kontrol betiği bulunamadı: $diag. Güncel feature dalını çek."
+}
+& $diag
+if($LASTEXITCODE -ne 0){
+    throw "Yanlış/eski Studio sürümü tespit edildi; yukarıdaki Git talimatlarını uygula."
+}
+if ($CheckOnly) { Write-Host 'Masaustu gereksinimleri ve UV kaynagi mevcut.'; exit 0 }
+if(Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue){
+    $inUse=@(Get-NetTCPConnection -LocalPort 1420 -State Listen -ErrorAction SilentlyContinue)
+    if($inUse.Count -gt 0){
+        throw ("Port 1420 zaten dinleniyor (PID: "+(($inUse | ForEach-Object OwningProcess) -join ',')+
+            "). Eski Vite/Tauri Studio sürecini kapat, ardından yeniden başlat.")
+    }
+}
 Push-Location $root
 try {
     if (-not (Test-Path (Join-Path $root 'node_modules'))) {
