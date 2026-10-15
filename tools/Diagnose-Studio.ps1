@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference='Stop'
 $root=(Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $expectedBranch='feat/desktop-studio-foundation'
-$requiredRevision='M2.7.1-PROXY-XATLAS'
+$requiredRevision='M2.8-XATLAS-TRADEOFF'
 $failed=$false
 
 function Say([string]$label,[string]$value){
@@ -61,7 +61,7 @@ foreach($check in $sources) {
     $name=$check[0];$path=$check[1];$marker=$check[2]
     $ok=Has $path $marker
     Say $name $(if($ok){'PRESENT'}else{'MISSING'})
-    if(-not $ok){Fail ("Missing M2.7.1 feature: "+$name)}
+    if(-not $ok){Fail ("Missing M2.8 feature: "+$name)}
 }
 if(Test-Path -LiteralPath $worker -PathType Leaf){
     $raw=Get-Content -LiteralPath $worker -Raw -Encoding UTF8
@@ -108,6 +108,6 @@ if($failed){
     Write-Host '  .\tools\Diagnose-Studio.ps1'
     exit 2
 }
-Write-Host 'SOURCE PASS — UV M2.7.1 code is present on disk.' -ForegroundColor Green
+Write-Host 'SOURCE PASS — UV M2.8 code is present on disk.' -ForegroundColor Green
 Write-Host 'Runtime still needs a restarted, newly built Tauri process and matching UI backend version.' -ForegroundColor Yellow
 exit 0

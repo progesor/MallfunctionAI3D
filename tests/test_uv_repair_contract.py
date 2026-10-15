@@ -39,6 +39,9 @@ class UVRepairContractTest(unittest.TestCase):
         self.assertIn('uv_object=proxy if proxy is not None else target',source)
         self.assertIn('sourceRenderNormalsKept',source)
         self.assertIn('args.uv_engine',source)
+        self.assertIn('args.atlas_objective',source)
+        self.assertIn('quality["atlasPolicyPassed"]',source)
+        self.assertIn('"atlasPreset":preset',source)
         self.assertIn('"engineMode": args.uv_engine',source)
         self.assertNotIn('normals_split_custom_set(',source)
         self.assertIn('stage("build_uv_topology_proxy")', source)
@@ -53,7 +56,7 @@ class UVRepairContractTest(unittest.TestCase):
         # Never split a failed topology into 1733 islands and run Cycles.
         candidate = source[source.index('def new_uv('):source.index('def emit_uv_stress_layout(')]
         self.assertNotIn('bpy.ops.uv.smart_project(', candidate)
-        self.assertIn('select_bake_candidate(attempted)', candidate)
+        self.assertIn('select_bake_candidate(attempted,atlas_objective)', candidate)
         self.assertLess(source.index('if not uv_report["accepted"]:'),
                         source.index('stage("bake_" + role)'))
         self.assertIn('"uvStretchGate": stretch_gate', source)
@@ -94,6 +97,9 @@ class UVRepairContractTest(unittest.TestCase):
         self.assertIn("audit_source_triangles(&original)", rust)
         self.assertIn("const FIDELITY_WORKER:", rust)
         self.assertIn("const UV_PLANNER_WORKER:", rust)
+        self.assertIn("fn verified_atlas_tier(", rust)
+        self.assertIn("atlas_objective:String", rust)
+        self.assertIn("uvIslandTradeoffDisclosed", rust)
         self.assertIn("const TOPOLOGY_WORKER:", rust)
         self.assertIn("const TOPOLOGY_ADAPTER_WORKER:", rust)
         self.assertIn("const XATLAS_ADAPTER_WORKER:", rust)

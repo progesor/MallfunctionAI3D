@@ -180,7 +180,7 @@ class UVModeSwitchRegression(unittest.TestCase):
         self.assertEqual(report["seamAngleDeg"], 38)
         self.assertEqual(len(report["triedPlans"]), 5)
         self.assertEqual(report["selectionReason"],
-                         "islands-reduced-and-source-relative-stretch-passed")
+                         "compact-first-with-strict-fidelity-fallback")
         self.assertEqual(report["newUVIslands"], 12)
         self.assertGreaterEqual(target.data.generation, 3)
 

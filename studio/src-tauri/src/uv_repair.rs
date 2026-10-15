@@ -249,6 +249,32 @@ fn read_blender_result(version:&Path, exit_success:bool, exit_code:Option<i32>, 
 /// indices within a primitive). An otherwise unexplained single missing face
 /// may be accepted ONLY by an explicit opt-in on a completed old bake; it
 /// remains flagged as an import-time loss in the immutable manifest.
+/// Cross-check UV atlas tradeoff without trusting mutable JSON status flags.
+/// Compact is always preferred; noncompact can pass only with hard caps
+/// AND substantial improvements in BOTH p95 and worst UV anisotropy.
+/// This must agree with blender/uv_planner.py; old reports without an
+/// objective retain the original compact-only behavior.
+fn verified_atlas_tier(
+    objective:&str, old:u64, new:u64,
+    source_p95:f64, rebuilt_p95:f64,
+    source_max:f64, rebuilt_max:f64,
+) -> StudioResult<&'static str> {
+    if !matches!(objective,"auto"|"compact"|"fidelity") ||
+        old==0 || new==0 || [source_p95,rebuilt_p95,source_max,rebuilt_max]
+        .iter().any(|n|!n.is_finite() || *n<1.0) {
+        return Err("UV atlas policy has invalid source/target values".into());
+    }
+    if new<old { return Ok("compact"); }
+    if objective=="compact" { return Ok("rejected"); }
+    let island_ratio=new as f64/old as f64;
+    let p95_ratio=rebuilt_p95/source_p95;
+    let worst_ratio=rebuilt_max/source_max;
+    if island_ratio<=1.800001 && p95_ratio<=0.900001 &&
+       worst_ratio<=0.500001 {
+        Ok("fidelity-tradeoff")
+    } else { Ok("rejected") }
+}
+
 fn verify_repair_report_mode(
     report:&Value, audit:&SourceTriangles, version:&Path,
     approve_one_import_face_loss:bool, review_only:bool,
@@ -282,8 +308,18 @@ fn verify_repair_report_mode(
     if new.is_none() {failures.push("uv.newUVIslands missing or not an integer");}
     if old==Some(0) {failures.push("source has zero UV islands");}
     if new==Some(0) {failures.push("repaired atlas has zero UV islands");}
-    if !review_only && matches!((old,new),(Some(a),Some(b)) if b>a) {
-        failures.push("new UV island count is greater than source count");
+    if !review_only && matches!((old,new),(Some(a),Some(b)) if b>=a) {
+        let fidelity_tag=
+            report.pointer("/uv/selectionTier").and_then(Value::as_str)
+                ==Some("fidelity-tradeoff");
+        let requested=report.pointer("/uv/atlasObjective")
+            .and_then(Value::as_str)
+            .is_some_and(|x|x=="auto"||x=="fidelity");
+        if !fidelity_tag || !requested {
+            failures.push("noncompact atlas needs explicit, verified fidelity-tradeoff tier");
+        }
+        // The numerical limits are checked separately in
+        // check_texture_quality before this report can be finalized.
     }
     if !failures.is_empty() {
         return Err(format!(
@@ -447,10 +483,41 @@ fn check_texture_quality(
              Kuyruk gibi yüzeylerde ciddi bantlaşma riski"
         ));
     }
-    if !simplified {
+    let objective=uv.get("atlasObjective").and_then(Value::as_str)
+        .unwrap_or("compact"); // backward-compatible compact-only reports
+    let expected_tier=verified_atlas_tier(
+        objective,old_islands,new_islands,
+        source_p95,rebuilt_p95,source_max,rebuilt_max)?;
+    let reported_tier=uv.get("selectionTier").and_then(Value::as_str)
+        .unwrap_or("compact");
+    let island_pass=expected_tier!="rejected" && expected_tier==reported_tier;
+    if let Some(flag)=saved.get("atlasPolicyPassed") {
+        if flag.as_bool()!=Some(island_pass) {
+            return Err("Blender atlasPolicyPassed does not match measured geometry".into());
+        }
+    } else if !simplified {
+        return Err("UV atlas fidelity tradeoff requires versioned policy proof".into());
+    }
+    if let Some(tier)=saved.get("atlasSelectionTier") {
+        if tier.as_str()!=Some(reported_tier) {
+            return Err("PBR atlas selection tier differs from UV report".into());
+        }
+    } else if !simplified {
+        return Err("PBR quality report omitted fidelity tradeoff tier".into());
+    }
+    if let Some(snapshot)=saved.get("atlasPolicy") {
+        if uv.get("islandPolicy")!=Some(snapshot) {
+            return Err("PBR atlas policy differs from Blender plan".into());
+        }
+    } else if !simplified {
+        return Err("Fidelity tradeoff requires saved UV island policy".into());
+    }
+    if !island_pass {
         failures.push(format!(
-            "UV atlası daha kolay düzenlenebilir olmadı: \
-             eski {old_islands} ada → yeni {new_islands} ada"
+            "UV atlas hedefi karşılanmadı: {old_islands} → {new_islands} ada; \
+             politika={objective}, reported={reported_tier}, checked={expected_tier}. \
+             Doku-öncelikli mod ancak ada ≤1.8×, P95 ≤0.9× ve \
+             maksimum gerilme ≤0.5× ise geçer"
         ));
     }
     let accepted=failures.is_empty();
@@ -489,8 +556,9 @@ fn quality_issues(quality:&Value) -> Vec<String> {
     if quality.pointer("/uvStretchGate/passed").and_then(Value::as_bool)==Some(false) {
         problems.push("UV gerilmesi yüksek".into());
     }
-    if quality.get("uvAtlasSimplified").and_then(Value::as_bool)==Some(false) {
-        problems.push("UV ada sayısı azaltılamadı".into());
+    if quality.get("uvAtlasSimplified").and_then(Value::as_bool)==Some(false) &&
+       quality.get("atlasPolicyPassed").and_then(Value::as_bool)!=Some(true) {
+        problems.push("UV atlas hedefi sağlanamadı".into());
     }
     problems
 }
@@ -660,6 +728,11 @@ fn finalize_repair(
         "sourceImportTriangleDelta":audit.declared-accepted_triangles,
         "surfaceTextureQuality":quality,
         "qualityGate":"surface-fidelity-local-distortion-v2",
+        "atlasObjective":report.pointer("/uv/atlasObjective").and_then(Value::as_str)
+            .unwrap_or("compact"),
+        "atlasSelectionTier":report.pointer("/uv/selectionTier").and_then(Value::as_str)
+            .unwrap_or("compact"),
+        "uvIslandsIncreased":new_islands>=old_islands,
         "reviewOnly":review_only,
         "qualityGatePassed":quality.get("passed").and_then(Value::as_bool)==Some(true),
         "qualityIssues":quality_issues(&quality),
@@ -688,7 +761,7 @@ fn finalize_repair(
 fn background_repair(
     asset_dir:PathBuf, file_path:PathBuf, source_sha:String, texture_version:String,
     blender:String, resolution:u32, angle:u32, preset:String,
-    weld:bool, safe_cleanup:bool,uv_engine:String,
+    weld:bool, safe_cleanup:bool,uv_engine:String,atlas_objective:String,
 ) -> StudioResult<PreparedRepair> {
     verify_sha256(&file_path,&source_sha).map_err(|e|
         format!("Kaynak GLB doğrulanamadı: {}: {e}",file_path.display()))?;
@@ -760,6 +833,7 @@ fn background_repair(
         .arg("--safe-cleanup").arg(if safe_cleanup {"1"} else {"0"})
         .arg("--preset").arg(&preset)
         .arg("--uv-engine").arg(&uv_engine)
+        .arg("--atlas-objective").arg(&atlas_objective)
         .output().map_err(|e|format!(
             "Blender UV/PBR başlatılamadı. Executable: {}. Script: {}. OS: {e}",
             blender,worker.display()))?;
@@ -778,8 +852,11 @@ fn register_repair(
     state:&StudioState, asset:&Asset, prepared:PreparedRepair
 ) -> StudioResult<UvRepairResult> {
     let report=&prepared.report;
+    let tier=report.pointer("/uv/selectionTier").and_then(Value::as_str);
     let title=if prepared.review_only {
         format!("{} · UV REVIEW (QA FAIL)",asset.title)
+    } else if tier==Some("fidelity-tradeoff") {
+        format!("{} · UV Fidelity (More Islands)",asset.title)
     } else {format!("{} · UV Clean",asset.title)};
     let new_asset=state.store_asset(
         &prepared.source,&title,&asset.engine,
@@ -795,7 +872,9 @@ fn register_repair(
             "productionExportBlocked":prepared.review_only,
             "qualityGatePassed":report.pointer("/textureFidelity/passed")
                 .and_then(Value::as_bool)==Some(true),
-            "qualityIssues":quality_issues(&report["textureFidelity"])
+            "qualityIssues":quality_issues(&report["textureFidelity"]),
+            "uvAtlasTier":tier.unwrap_or("compact"),
+            "uvIslandTradeoffDisclosed":tier==Some("fidelity-tradeoff")
         }),
     )?;
     let uv=report.get("uv").ok_or("UV report missing")?;
@@ -961,8 +1040,11 @@ pub async fn save_uv_review(
 pub async fn repair_asset_uv(
     asset_id:String, texture_export_dir:String, preset:String,
     resolution:u32, seam_angle:u32, weld:bool, safe_cleanup:bool,
-    uv_engine:String, state:State<'_,StudioState>
+    uv_engine:String, atlas_objective:String, state:State<'_,StudioState>
 ) -> StudioResult<UvRepairResult> {
+    if !matches!(atlas_objective.as_str(),"auto"|"compact"|"fidelity"){
+        return Err("UV atlas objective must be auto, compact or fidelity".into());
+    }
     if !matches!(uv_engine.as_str(),"both"|"blender"|"xatlas"){
         return Err("UV engine must be both, blender or xatlas".into());
     }
@@ -982,7 +1064,7 @@ pub async fn repair_asset_uv(
     let original_path=PathBuf::from(&asset.file_path);
     let prepared=tauri::async_runtime::spawn_blocking(move ||
         background_repair(dir,original_path,sha,texture_export_dir,exe,resolution,seam_angle,
-                          preset.clone(),weld,safe_cleanup,uv_engine)
+                          preset.clone(),weld,safe_cleanup,uv_engine,atlas_objective)
     ).await.map_err(|e|format!("UV Repair worker hatası: {e}"))??;
     register_repair(&state,&asset,prepared)
 }
@@ -1020,6 +1102,104 @@ mod tests {
         fs::write(dir.join("Repair_Report.json"),b"{\"success\":true}").unwrap();
         assert!(read_blender_result(&dir,true,Some(0),"done").is_ok());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]fn audited_fox_xatlas_candidate_requires_both_fidelity_ratios() {
+        // Real 2026-10-15 UV_Plan(3).json values. No blind island waiver:
+        // 459 > 262 but p95 and peak both improve a great deal.
+        assert_eq!(verified_atlas_tier(
+            "auto",262,459,1.24099,1.0979,30.14263,3.16874
+        ).unwrap(),"fidelity-tradeoff");
+        assert_eq!(verified_atlas_tier(
+            "fidelity",262,459,1.24099,1.0979,30.14263,3.16874
+        ).unwrap(),"fidelity-tradeoff");
+        assert_eq!(verified_atlas_tier(
+            "compact",262,459,1.24099,1.0979,30.14263,3.16874
+        ).unwrap(),"rejected");
+        assert_eq!(verified_atlas_tier(
+            "auto",262,1733,1.24099,1.0979,30.14263,3.16874
+        ).unwrap(),"rejected");
+        assert_eq!(verified_atlas_tier(
+            "auto",262,459,1.24099,1.20,30.14263,3.16874
+        ).unwrap(),"rejected");
+    }
+    #[test]fn geometry_gate_allows_only_versioned_strict_fidelity_tradeoff() {
+        let audited=SourceTriangles{
+            declared:7980,zero_area:0,duplicate_faces:0,effective:7980
+        };
+        let mut valid=json!({
+            "sourceUntouched":true,"trianglesBefore":7980,
+            "trianglesAfter":7980,
+            "uv":{"oldUVIslands":262,"newUVIslands":459,
+                  "atlasObjective":"auto","selectionTier":"fidelity-tradeoff"}
+        });
+        assert_eq!(verify_repair_report_mode(
+            &valid,&audited,Path::new("example"),false,false
+        ).unwrap().2,7980);
+        valid["uv"]["selectionTier"]=json!("compact");
+        assert!(verify_repair_report_mode(
+            &valid,&audited,Path::new("example"),false,false
+        ).is_err());
+        valid["uv"]["selectionTier"]=json!("fidelity-tradeoff");
+        valid["uv"]["atlasObjective"]=json!("compact");
+        assert!(verify_repair_report_mode(
+            &valid,&audited,Path::new("example"),false,false
+        ).is_err());
+    }
+    #[test]fn uv_quality_noncompact_trades_only_on_genuine_distortion_gain() {
+        let folder=std::env::temp_dir().join(format!("uv_fidelity_{}",Uuid::new_v4()));
+        fs::create_dir_all(&folder).unwrap();
+        let island_policy=json!({
+            "atlasObjective":"auto","selectionTier":"fidelity-tradeoff",
+            "passed":true,"uvAtlasSimplified":false,"islandRatio":1.751908,
+            "p95Ratio":0.884697,"maximumRatio":0.105125,
+            "limits":{"maxIslandRatio":1.8,"maxP95Ratio":0.90,"maxMaximumRatio":0.50},
+            "message":"UV islands increased with much better texture fidelity"
+        });
+        let quality=json!({
+            "schemaVersion":2,"evaluated":true,
+            "method":"same-3d-surface-barycentric-UV-reprojection",
+            "sampleCount":31920,"passed":true,
+            "uvAtlasSimplified":false,"atlasPolicyPassed":true,
+            "atlasSelectionTier":"fidelity-tradeoff",
+            "atlasObjective":"auto","atlasPolicy":island_policy,
+            "sourceUvProvenance":{"matchedTriangleCount":7980,
+                "originalCornerUvDriftCount":0,"originalUvProvenanceIntact":true},
+            "uvStretch":{
+                "source":{"trianglesSampled":7980,"p95Anisotropy":1.24099,
+                          "maximumAnisotropy":30.14263},
+                "rebuilt":{"trianglesSampled":7980,"p95Anisotropy":1.0979,
+                           "maximumAnisotropy":3.16874,
+                           "degenerateUvTriangles":0}
+            },
+            "uvStretchGate":{"passed":true},
+            "maps":{
+                "baseColor":{"sampleCount":31920,"meanAbsoluteError":0.01,
+                    "p95AbsoluteError":0.02,"p99AbsoluteError":0.03,
+                    "severeSampleFraction":0.0,"passed":true},
+                "metallic":{"sampleCount":31920,"meanAbsoluteError":0.01,
+                    "p95AbsoluteError":0.02,"p99AbsoluteError":0.03,
+                    "severeSampleFraction":0.0,"passed":true},
+                "roughness":{"sampleCount":31920,"meanAbsoluteError":0.01,
+                    "p95AbsoluteError":0.02,"p99AbsoluteError":0.03,
+                    "severeSampleFraction":0.0,"passed":true},
+                "occlusion":{"sampleCount":31920,"meanAbsoluteError":0.01,
+                    "p95AbsoluteError":0.02,"p99AbsoluteError":0.03,
+                    "severeSampleFraction":0.0,"passed":true}
+            }
+        });
+        fs::write(folder.join("Texture_Quality.json"),
+            serde_json::to_vec(&quality).unwrap()).unwrap();
+        let report=json!({
+            "textureFidelity":quality,"trianglesBefore":7980,
+            "uv":{"oldUVIslands":262,"newUVIslands":459,
+                  "selectionTier":"fidelity-tradeoff",
+                  "atlasObjective":"auto",
+                  "islandPolicy":quality["atlasPolicy"]}
+        });
+        assert_eq!(verify_texture_quality(&report,&folder).unwrap()["passed"],
+                   json!(true));
+        fs::remove_dir_all(folder).unwrap();
     }
 
     #[test]fn rejects_unscored_or_low_fidelity_uv_repairs() {

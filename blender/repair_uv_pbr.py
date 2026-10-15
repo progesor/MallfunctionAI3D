@@ -67,6 +67,7 @@ def parse_args():
     parser.add_argument("--safe-cleanup", type=int, choices=(0, 1), default=1)
     parser.add_argument("--preset", choices=("preserve", "plush"), default="preserve")
     parser.add_argument("--uv-engine", choices=("both","blender","xatlas"),default="both")
+    parser.add_argument("--atlas-objective", choices=("auto","compact","fidelity"),default="auto")
     return parser.parse_args(sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else [])
 
 
@@ -244,7 +245,8 @@ def mark_curvature_seams(mesh, threshold_degrees):
         bm.free()
 
 
-def new_uv(target, angle, margin_px, resolution, engine_mode="both"):
+def new_uv(target, angle, margin_px, resolution,
+           engine_mode="both", atlas_objective="auto"):
     """Try multiple seam plans and choose lowest UV stretch, not island count."""
     mesh = target.data
     original = mesh.uv_layers.active
@@ -302,6 +304,7 @@ def new_uv(target, angle, margin_px, resolution, engine_mode="both"):
                      and max(v for _, v in uv_values) - min(v for _, v in uv_values) > .2)
         metrics = mesh_uv_stretch(target.data, clean_name)
         candidate = evaluate_plan(old_count, source_stretch, {
+            "engine": "blender-angle",
             "seamAngleDeg": threshold,
             "seamEdges": seams,
             "connectedComponents": components,
@@ -311,7 +314,7 @@ def new_uv(target, angle, margin_px, resolution, engine_mode="both"):
             "degenerateUvTriangles": metrics.get("degenerateUvTriangles", 0),
             "rebuiltStretch": metrics,
             "validBounds": bool(valid),
-        })
+        },objective=atlas_objective)
         return candidate
 
     angles = list(dict.fromkeys([
@@ -320,7 +323,7 @@ def new_uv(target, angle, margin_px, resolution, engine_mode="both"):
     ]))
     provider_status = {"engine": "xatlas", "available": False,
                        "reason": "Optional module not installed"}
-    xatlas_uv_snapshot = None
+    xatlas_uv_snapshots = {}
     for threshold in (angles if engine_mode in ("both","blender") else []):
         try:
             candidate = unwrap_threshold(threshold)
@@ -337,66 +340,81 @@ def new_uv(target, angle, margin_px, resolution, engine_mode="both"):
             last_error = "UV preflight rejected {}°: {}".format(
                 threshold, "; ".join(candidate["reasons"]))
 
-    # A MIT-licensed xatlas adapter may contribute another atlas candidate.
-    # No network/pip install occurs during a bake; if the Blender Python
-    # module is missing, the normal Blender candidates still run.
-    try:
-        provider_status = (
-            apply_xatlas_uv(target.data, clean_name)
-            if engine_mode in ("both","xatlas") else
-            {"engine":"xatlas","available":False,
-             "reason":"Disabled by user-selected Blender-only mode"}
-        )
-        if provider_status["available"]:
-            live = target.data.uv_layers.get(clean_name)
-            xatlas_uv_snapshot = [
-                (float(item.uv[0]), float(item.uv[1]))
-                for item in live.data
-            ]
-            new_count = uv_island_count(target.data, clean_name)
-            metrics = mesh_uv_stretch(target.data, clean_name)
-            if xatlas_uv_snapshot:
-                uu = [u for u, _ in xatlas_uv_snapshot]
-                vv = [v for _, v in xatlas_uv_snapshot]
-                valid_bounds = all(
-                    math.isfinite(u) and math.isfinite(v) and
-                    -0.001 <= u <= 1.001 and -0.001 <= v <= 1.001
-                    for u, v in xatlas_uv_snapshot
-                ) and max(uu)-min(uu)>0.2 and max(vv)-min(vv)>0.2
-            else:
-                valid_bounds = False
-            xatlas_candidate = evaluate_plan(old_count, source_stretch, {
-                "engine": "xatlas",
-                "seamAngleDeg": None,
-                "seamEdges": None,
-                "connectedComponents": None,
-                "newUVIslands": new_count,
-                "rebuiltStretch": metrics,
-                "p95Anisotropy": metrics["p95Anisotropy"],
-                "maximumAnisotropy": metrics["maximumAnisotropy"],
-                "degenerateUvTriangles": metrics.get("degenerateUvTriangles",0),
-                "validBounds": valid_bounds,
-            })
-            attempted.append(xatlas_candidate)
-    except Exception as exc:
-        provider_status = {
-            "engine": "xatlas", "available": False,
-            "reason": "Candidate rejected safely: " + str(exc),
-        }
-        xatlas_uv_snapshot = None
+    # CPU-only xatlas sweep: default baseline, moderate and broad chart
+    # growth. The latter two tune upstream xatlas.ChartOptions.max_cost.
+    # All candidates go through the same UV preflight/PBR gate.
+    provider_trials=[]
+    if engine_mode in ("both","xatlas"):
+        for preset in ("default","joined","broad"):
+            try:
+                status=apply_xatlas_uv(
+                    target.data,clean_name,preset=preset,resolution=resolution)
+                provider_trials.append(status)
+                if not status["available"]:
+                    last_error=status.get("reason","xatlas unavailable")
+                    break
+                live=target.data.uv_layers.get(clean_name)
+                snapshot=[(float(item.uv[0]),float(item.uv[1]))
+                          for item in live.data]
+                metrics=mesh_uv_stretch(target.data,clean_name)
+                if snapshot:
+                    uu=[u for u,_ in snapshot]
+                    vv=[v for _,v in snapshot]
+                    bounds=all(
+                        math.isfinite(u) and math.isfinite(v) and
+                        -.001<=u<=1.001 and -.001<=v<=1.001
+                        for u,v in snapshot
+                    ) and max(uu)-min(uu)>.2 and max(vv)-min(vv)>.2
+                else:
+                    bounds=False
+                candidate=evaluate_plan(old_count,source_stretch,{
+                    "engine":"xatlas",
+                    "atlasPreset":preset,
+                    "seamAngleDeg":None,
+                    "seamEdges":None,
+                    "connectedComponents":None,
+                    "newUVIslands":uv_island_count(target.data,clean_name),
+                    "rebuiltStretch":metrics,
+                    "p95Anisotropy":metrics.get("p95Anisotropy"),
+                    "maximumAnisotropy":metrics.get("maximumAnisotropy"),
+                    "degenerateUvTriangles":metrics.get("degenerateUvTriangles",0),
+                    "validBounds":bool(bounds),
+                },objective=atlas_objective)
+                attempted.append(candidate)
+                xatlas_uv_snapshots[preset]=snapshot
+            except Exception as exc:
+                detail="xatlas {} candidate unavailable: {}".format(
+                    preset,str(exc))
+                last_error=detail
+                attempted.append({
+                    "engine":"xatlas","atlasPreset":preset,
+                    "valid":False,"passesPreflight":False,
+                    "reasons":[detail],"score":None,
+                })
+                provider_trials.append({
+                    "engine":"xatlas","atlasPreset":preset,
+                    "available":False,"reason":detail,
+                })
+    provider_status={
+        "engine":"xatlas",
+        "available":any(x.get("available",False) for x in provider_trials),
+        "trials":provider_trials,
+        "reason":last_error if not provider_trials else None,
+    }
 
     # Never pick a candidate that is only 'best of bad' and then spend GPU
     # minutes on five Cycles bakes. Previous Smart UV fallback fragmented
     # the user's 262-island Fox into 1733 UV islands.
-    winning = select_bake_candidate(attempted)
+    winning = select_bake_candidate(attempted,atlas_objective)
     if winning is not None:
         if winning.get("engine") == "xatlas":
-            if xatlas_uv_snapshot is None:
+            snapshot=xatlas_uv_snapshots.get(winning["atlasPreset"])
+            if snapshot is None:
                 raise RuntimeError("xatlas winner UV data lost")
             live = target.data.uv_layers.get(clean_name)
-            if len(live.data) != len(xatlas_uv_snapshot):
+            if len(live.data) != len(snapshot):
                 raise RuntimeError("xatlas UV corner mapping changed")
-            for i, (u, v) in enumerate(xatlas_uv_snapshot):
+            for i, (u, v) in enumerate(snapshot):
                 live.data[i].uv = (u, v)
             target.data.uv_layers.active = live
             live.active_render = True
@@ -426,7 +444,11 @@ def new_uv(target, angle, margin_px, resolution, engine_mode="both"):
             "providerStatus": provider_status,
             "engineMode":engine_mode,
             "triedPlans": attempted,
-            "selectionReason": "islands-reduced-and-source-relative-stretch-passed",
+            "selectionReason": "compact-first-with-strict-fidelity-fallback",
+            "atlasObjective":atlas_objective,
+            "selectionTier":winner["selectionTier"],
+            "islandPolicy":winner["islandPolicy"],
+            "atlasPreset":winner.get("atlasPreset"),
         }
 
     # No Smart UV fallback: it can easily make editing harder than original.
@@ -434,9 +456,9 @@ def new_uv(target, angle, margin_px, resolution, engine_mode="both"):
     diagnostic = select_diagnostic_candidate(attempted, old_count)
     if diagnostic is not None:
         try:
-            if diagnostic.get("engine") == "xatlas" and xatlas_uv_snapshot is not None:
+            if diagnostic.get("engine") == "xatlas" and xatlas_uv_snapshots.get(diagnostic.get("atlasPreset")) is not None:
                 live = target.data.uv_layers.get(clean_name)
-                for i, coords in enumerate(xatlas_uv_snapshot):
+                for i, coords in enumerate(xatlas_uv_snapshots[diagnostic["atlasPreset"]]):
                     live.data[i].uv = coords
             else:
                 diagnostic = unwrap_threshold(diagnostic["seamAngleDeg"])
@@ -447,6 +469,8 @@ def new_uv(target, angle, margin_px, resolution, engine_mode="both"):
     return old_name, clean_name, {
         "strategy": "uv-preflight-rejected",
         "accepted": False,
+        "atlasObjective":atlas_objective,
+        "selectionTier":"rejected",
         "oldUVIslands": old_count,
         "newUVIslands": best_count,
         "sourceStretch": source_stretch,
@@ -1009,7 +1033,8 @@ def main():
     uv_object=proxy if proxy is not None else target
     stage("auto_unwrap")
     old_uv,proxy_uv_name,uv_report=new_uv(
-        uv_object,args.angle,args.margin,args.resolution,args.uv_engine)
+        uv_object,args.angle,args.margin,args.resolution,
+        args.uv_engine,args.atlas_objective)
     uv_transfer={
         "sourceRenderNormalsKept":True,
         "renderMeshUntouched":True,
@@ -1029,6 +1054,7 @@ def main():
         "uv": uv_report,
         "weld": weld_diagnostics,
         "engineMode": args.uv_engine,
+        "atlasObjective":args.atlas_objective,
         "sourceTriangleCountInBlender": before_triangles,
         "sourceMeshHealth": original_health,
         "workingMeshHealth":mesh_health(uv_object.data),
@@ -1104,7 +1130,12 @@ def main():
             reference_mesh, old_uv, new_uv_name, surface_pairs, uv_provenance)
         islands_improved = (uv_report["newUVIslands"] < uv_report["oldUVIslands"])
         quality["uvAtlasSimplified"] = islands_improved
-        quality["passed"] = bool(quality["passed"] and islands_improved)
+        atlas_policy=uv_report["islandPolicy"]
+        quality["atlasPolicyPassed"] = bool(atlas_policy["passed"])
+        quality["atlasSelectionTier"] = uv_report["selectionTier"]
+        quality["atlasObjective"] = uv_report["atlasObjective"]
+        quality["atlasPolicy"] = atlas_policy
+        quality["passed"] = bool(quality["passed"] and quality["atlasPolicyPassed"])
         quality["qualityStatus"] = "passed" if quality["passed"] else "needs-review"
         (output / "Texture_Quality.json").write_text(
             json.dumps(quality, ensure_ascii=False, indent=2) + "\n",

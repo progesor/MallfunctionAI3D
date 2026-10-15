@@ -25,7 +25,7 @@ pub struct UvEngineStatus {
 // Visible build handshake: versioned BOTH in Rust and TS panel. The
 // included worker checksum is derived from the exact compiler-embedded
 // Python bytes so a stale Tauri binary cannot masquerade as current.
-pub(crate) const UV_RUNTIME_REVISION:&str="M2.7.1-PROXY-XATLAS";
+pub(crate) const UV_RUNTIME_REVISION:&str="M2.8-XATLAS-TRADEOFF";
 const WORKER_SOURCE:&str=include_str!("../../../blender/repair_uv_pbr.py");
 fn worker_sha256()->String {
     format!("{:x}",Sha256::digest(WORKER_SOURCE.as_bytes()))
@@ -183,7 +183,7 @@ pub async fn install_uv_xatlas(state:State<'_,StudioState>)->StudioResult<UvEngi
 mod tests {
     use super::*;
     #[test]fn worker_runtime_handshake_matches_embedded_uv_proxy(){
-        assert_eq!(UV_RUNTIME_REVISION,"M2.7.1-PROXY-XATLAS");
+        assert_eq!(UV_RUNTIME_REVISION,"M2.8-XATLAS-TRADEOFF");
         assert!(worker_has_proxy());
         assert_eq!(worker_sha256().len(),64);
     }

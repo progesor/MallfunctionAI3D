@@ -3,7 +3,7 @@ import { Check, ChevronDown, Clipboard, Layers3, LoaderCircle, Wrench } from 'lu
 import { bridge } from '../lib/bridge';
 import type {
   Asset, TextureExportSummary, UvRepairResult, UvRepairPreset,
-  RecoverableUvRepair, UvEngineMode, UvEngineStatus
+  RecoverableUvRepair, UvEngineMode, UvEngineStatus, UvAtlasObjective
 } from '../lib/bridge';
 
 interface Props {
@@ -14,7 +14,7 @@ interface Props {
   onOpen: (asset: Asset) => Promise<void>;
 }
 
-export const UV_RUNTIME_REVISION = 'M2.7.1-PROXY-XATLAS' as const;
+export const UV_RUNTIME_REVISION = 'M2.8-XATLAS-TRADEOFF' as const;
 
 export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props) {
   const [versions,setVersions] = useState<TextureExportSummary[]>([]);
@@ -27,6 +27,7 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
   const [weld,setWeld] = useState(true);
   const [safeCleanup,setSafeCleanup] = useState(true);
   const [uvEngine,setUvEngine] = useState<UvEngineMode>('both');
+  const [atlasObjective,setAtlasObjective] = useState<UvAtlasObjective>('auto');
   const [engineStatus,setEngineStatus] = useState<UvEngineStatus|null>(null);
   const [runtimeError,setRuntimeError] = useState('');
   const [installingXatlas,setInstallingXatlas] = useState(false);
@@ -101,9 +102,12 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
     setBusy(true);setError('');setResult(null);
     try {
       const repaired=await bridge.repairUV(
-        asset.id,selected,preset,resolution,seamAngle,weld,safeCleanup,uvEngine);
+        asset.id,selected,preset,resolution,seamAngle,weld,safeCleanup,uvEngine,atlasObjective);
+      const fidelityTradeoff=repaired.quality?.atlasSelectionTier==='fidelity-tradeoff'
+        && repaired.quality?.atlasPolicyPassed===true
+        && repaired.quality?.passed===true;
       if (!repaired.sourceUntouched || repaired.newIslands<1 ||
-          repaired.newIslands>repaired.oldIslands ||
+          (repaired.newIslands>=repaired.oldIslands && !fidelityTradeoff) ||
           repaired.asset.id===asset.id) {
         throw new Error('Onarım kaydı source/UV kabul koşullarını geçmedi.');
       }
@@ -222,6 +226,19 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
         klasörüne yapılır; Blender sistem dosyaları değiştirilmez.
         İndirmenin başlaması için bu düğmeye basman gerekir.</small>
     </div>
+    <label className="unity-export-select"><span>UV ATLAS HEDEFİ</span><div><select
+      aria-label="UV atlas hedefi" value={atlasObjective} disabled={busy}
+      onChange={e=>setAtlasObjective(e.target.value as UvAtlasObjective)}>
+        <option value="auto">Otomatik · önce az ada, gerekirse yüksek doku sadakati</option>
+        <option value="compact">Az parçalı UV · ada sayısı mutlaka azalsın</option>
+        <option value="fidelity">Doku öncelikli · daha çok UV adasına izin ver</option>
+      </select><ChevronDown size={13}/></div></label>
+    <p className="mini-disclaimer">
+      Doku öncelikli atlas, yalnızca UV ada sayısı en fazla 1,8 kat artarken
+      P95 gerilmesi en az %10 ve en kötü gerilme en az %50 iyileşirse
+      bake işlemine geçer. Beş PBR map kalite testi ayrıca zorunludur.
+      Daha çok ada, elle UV düzenlemeyi zorlaştırabilir.
+    </p>
     <label className="unity-export-select"><span>PBR KAYNAĞI</span><div><select
       aria-label="UV Repair PBR sürümü" value={selected} disabled={busy||loading}
       onChange={e=>{setSelected(e.target.value);setResult(null);}}>
@@ -332,7 +349,16 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
     {result&&<div className="uv-repair-result" role="status" data-testid="uv-repair-success">
       <strong>{result.reviewOnly
         ? 'QA FAIL · UV REVIEW — inceleme taslağı arşive eklendi'
-        : <><Check size={14}/> Yeni temiz sürüm arşive eklendi</>}</strong>
+        : result.quality?.atlasSelectionTier==='fidelity-tradeoff'
+          ? 'Doku öncelikli UV hazır — daha çok UV adası var'
+          : <><Check size={14}/> Yeni temiz sürüm arşive eklendi</>}</strong>
+      {result.quality?.atlasSelectionTier==='fidelity-tradeoff' &&
+        <p role="note" className="mini-disclaimer">
+          UV adaları {result.oldIslands} → {result.newIslands} yükseldi.
+          Doku ve geometrik gerilme kontrolleri geçti; ancak atlas elle
+          düzenleme için kaynak modelden daha parçalıdır. Oyuna aktarmadan
+          önce normal/doku kalitesini görsel olarak kontrol et.
+        </p>}
       {result.reviewOnly&&<p role="alert" className="unity-export-error">
         Bu atlas PBR/UV kalite kapısını GEÇMEDİ. Blender bake dosyaları kurtarıldı;
         orijinal GLB korundu. Bu taslağın Unity export'u engellendi.

@@ -10,7 +10,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1] / 'blender'
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from uv_planner import evaluate_plan, select_bake_candidate, select_diagnostic_candidate
+from uv_planner import (evaluate_plan, select_bake_candidate,
+                       select_diagnostic_candidate, evaluate_island_policy)
 
 SOURCE = {'p95Anisotropy': 1.24353, 'maximumAnisotropy': 8.62372,
           'trianglesSampled': 7993, 'degenerateUvTriangles': 0}
@@ -46,6 +47,63 @@ class UVPreflightRegression(unittest.TestCase):
         good = plan(55, 180, 1.6, 14.)
         bad = plan(62, 110, 4.5, 80.)
         self.assertIs(select_bake_candidate([bad, good]), good)
+
+    def test_uploaded_fox_xatlas_low_distortion_is_explicit_fidelity_tier(self):
+        # Real 2026-10-15 user UV_Plan(3).json, NOT a made-up sample:
+        # xatlas 459 islands (262 source), p95 1.0979 vs 1.24099,
+        # worst 3.16874 vs 30.14263, zero degenerate triangles.
+        source={"p95Anisotropy":1.24099,"maximumAnisotropy":30.14263,
+                "trianglesSampled":7980,"degenerateUvTriangles":0}
+        candidate={"engine":"xatlas","atlasPreset":"default",
+                   "newUVIslands":459,"validBounds":True,
+                   "rebuiltStretch":{"p95Anisotropy":1.0979,
+                                     "maximumAnisotropy":3.16874,
+                                     "trianglesSampled":7980,
+                                     "degenerateUvTriangles":0}}
+        compact=evaluate_plan(262,source,candidate,objective="compact")
+        auto=evaluate_plan(262,source,candidate,objective="auto")
+        self.assertFalse(compact["passesPreflight"])
+        self.assertTrue(auto["passesPreflight"])
+        self.assertEqual(auto["selectionTier"],"fidelity-tradeoff")
+        self.assertAlmostEqual(auto["islandPolicy"]["islandRatio"],1.751908,places=5)
+        self.assertFalse(auto["islandPolicy"]["uvAtlasSimplified"])
+        self.assertEqual(select_bake_candidate([auto],"auto"),auto)
+        self.assertIsNone(select_bake_candidate([auto],"compact"))
+
+    def test_auto_prefers_compact_over_fidelity_when_both_quality_safe(self):
+        source={"p95Anisotropy":1.24099,"maximumAnisotropy":30.14263,
+                "trianglesSampled":7980,"degenerateUvTriangles":0}
+        compact=evaluate_plan(262,source,{
+            "newUVIslands":200,"validBounds":True,
+            "rebuiltStretch":{"p95Anisotropy":1.8,
+                              "maximumAnisotropy":12.0,
+                              "trianglesSampled":7980,"degenerateUvTriangles":0}
+        })
+        fidelity=evaluate_plan(262,source,{
+            "newUVIslands":459,"validBounds":True,
+            "rebuiltStretch":{"p95Anisotropy":1.0979,
+                              "maximumAnisotropy":3.16874,
+                              "trianglesSampled":7980,"degenerateUvTriangles":0}
+        })
+        self.assertTrue(compact["passesPreflight"])
+        self.assertTrue(fidelity["passesPreflight"])
+        self.assertIs(select_bake_candidate([fidelity,compact],"auto"),compact)
+        self.assertIs(select_bake_candidate([fidelity,compact],"fidelity"),fidelity)
+
+    def test_fidelity_tradeoff_never_opens_unlimited_smart_uv(self):
+        source={"p95Anisotropy":1.24099,"maximumAnisotropy":30.14263,
+                "trianglesSampled":7980,"degenerateUvTriangles":0}
+        def score(islands,p95,peak):
+            return evaluate_plan(262,source,{
+                "newUVIslands":islands,"validBounds":True,
+                "rebuiltStretch":{"p95Anisotropy":p95,
+                                  "maximumAnisotropy":peak,
+                                  "trianglesSampled":7980,
+                                  "degenerateUvTriangles":0}
+            })
+        self.assertFalse(score(1733,1.1,3.1)["passesPreflight"])
+        self.assertFalse(score(459,1.21,3.1)["passesPreflight"])
+        self.assertFalse(score(459,1.1,20.)["passesPreflight"])
 
     def test_bounds_and_invalid_metrics_fail_closed(self):
         bad = evaluate_plan(254, SOURCE, {

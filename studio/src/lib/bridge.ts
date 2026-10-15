@@ -61,6 +61,7 @@ export interface UnityExportResult {
 export interface UnityExportSummary { outputDir: string; generatedAt: string; triangles: [number, number, number] }
 export type UvRepairPreset = 'preserve' | 'plush';
 export type UvEngineMode = 'both' | 'blender' | 'xatlas';
+export type UvAtlasObjective = 'auto' | 'compact' | 'fidelity';
 export interface UvEngineStatus {
   blenderReady: boolean;
   xatlasReady: boolean;
@@ -104,6 +105,11 @@ export interface UvRepairResult {
     uvStretchGate?: { passed: boolean; p95Ratio: number; maximumRatio: number;
       allowedP95Anisotropy: number; allowedMaximumAnisotropy: number };
     uvAtlasSimplified?: boolean;
+    atlasObjective?: UvAtlasObjective;
+    atlasSelectionTier?: 'compact' | 'fidelity-tradeoff';
+    atlasPolicyPassed?: boolean;
+    atlasPolicy?: { islandRatio: number; p95Ratio: number;
+      maximumRatio: number; uvAtlasSimplified: boolean; passed: boolean };
   };
   meshHealth?: {
     source: { boundaryEdges: number; nonManifoldEdges: number;
@@ -168,8 +174,9 @@ export const bridge = {
   lodBinary: (assetId: string, index: number) => invoke<string>('blender_read_lod', { assetId, index }),
   repairUV: (assetId: string, textureExportDir: string, preset: UvRepairPreset,
     resolution: number, seamAngle: number, weld: boolean,
-    safeCleanup: boolean, uvEngine: UvEngineMode) => invoke<UvRepairResult>('repair_asset_uv', {
-    assetId, textureExportDir, preset, resolution, seamAngle, weld, safeCleanup, uvEngine,
+    safeCleanup: boolean, uvEngine: UvEngineMode,
+    atlasObjective: UvAtlasObjective) => invoke<UvRepairResult>('repair_asset_uv', {
+    assetId, textureExportDir, preset, resolution, seamAngle, weld, safeCleanup, uvEngine, atlasObjective,
   }),
   uvRepairAttempts: (assetId: string) =>
     invoke<RecoverableUvRepair[]>('list_uv_repair_attempts', { assetId }),

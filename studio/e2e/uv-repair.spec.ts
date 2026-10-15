@@ -41,14 +41,14 @@ async function openStudio(
             [{outputDir:'C:\\Test\\texture_exports\\pbr_1024',preset:'1024',generatedAt:'2026-10-15',mapCount:5}]:[];
           case 'uv_engine_status':return {blenderReady:true,
             xatlasReady:false,pythonVersion:'3.13',
-            backendRevision:staleBackend?'M2.6-STALE':'M2.7.1-PROXY-XATLAS',
+            backendRevision:staleBackend?'M2.6-STALE':'M2.8-XATLAS-TRADEOFF',
             workerSha256:'f'.repeat(64),proxyWorkerReady:!staleBackend,
             pluginPath:'C:\\Test\\plugins\\xatlas',message:'Blender hazır; xatlas kurulu değil'};
           case 'install_uv_xatlas':
             calls.push({install:'xatlas'});
             return {blenderReady:true,xatlasReady:true,pythonVersion:'3.13',
               pluginPath:'C:\\Test\\plugins\\xatlas',
-              backendRevision:staleBackend?'M2.6-STALE':'M2.7.1-PROXY-XATLAS',
+              backendRevision:staleBackend?'M2.6-STALE':'M2.8-XATLAS-TRADEOFF',
               workerSha256:'f'.repeat(64),proxyWorkerReady:!staleBackend,
               message:'Blender + xatlas 0.0.11 hazır'};
           case 'list_uv_repair_attempts':return recovery ? [{
@@ -86,6 +86,8 @@ async function openStudio(
           case 'repair_asset_uv':
             calls.push(args);
             return {quality:{passed:true,qualityStatus:'passed',
+                atlasSelectionTier:args?.atlasObjective==='fidelity'?'fidelity-tradeoff':'compact',
+                atlasPolicyPassed:true,
                 maps:{baseColor:{role:'baseColor',sampleCount:30,meanAbsoluteError:0.012,
                   p95AbsoluteError:0.06,passed:true}}},
               meshHealth:{source:{boundaryEdges:9,nonManifoldEdges:13,looseVertices:2,
@@ -93,10 +95,14 @@ async function openStudio(
                 repairedWorking:{boundaryEdges:9,nonManifoldEdges:13,looseVertices:0,
                 zeroAreaFaces:0,connectedComponents:9},
                 safeCleanup:{applied:true,removedLooseVertices:2,visibleTrianglesPreserved:true}},
-              asset:{...asset,id:'e33aca7a-61fe-49b1-a885-e23f6f97e7ef',title:'PLAYBOX Fox Plush · UV Clean'},
+              asset:{...asset,id:'e33aca7a-61fe-49b1-a885-e23f6f97e7ef',
+                title:args?.atlasObjective==='fidelity'?'PLAYBOX Fox Plush · UV Fidelity (More Islands)':'PLAYBOX Fox Plush · UV Clean'},
               versionDir:'C:\\Test\\uv_repairs\\v2',reportPath:'C:\\Test\\uv_repairs\\v2\\Repair_Report.json',
               workingBlend:'C:\\Test\\uv_repairs\\v2\\Repair_Working.blend',uvLayout:'C:\\Test\\uv_repairs\\v2\\UV_Layout.svg',
-              strategy:'curvature-seams-angle-unwrap',oldIslands:168,newIslands:18,sourceUntouched:true};
+              strategy:'curvature-seams-angle-unwrap',
+              oldIslands:args?.atlasObjective==='fidelity'?262:168,
+              newIslands:args?.atlasObjective==='fidelity'?459:18,
+              sourceUntouched:true};
           default:throw new Error('Unexpected IPC in UV Repair test: '+name);
         }
       }
@@ -127,7 +133,8 @@ test('one-click UV repair preserves existing source and exposes optional overrid
   await expect(page.getByText(/168 → 18/)).toBeVisible();
   const calls=await page.evaluate(()=>(window as unknown as {__repairCalls:unknown[]}).__repairCalls);
   expect(calls).toEqual([{assetId:asset.id,textureExportDir:'C:\\Test\\texture_exports\\pbr_1024',
-    preset:'plush',resolution:1024,seamAngle:78,weld:true,safeCleanup:true,uvEngine:'both'}]);
+    preset:'plush',resolution:1024,seamAngle:78,weld:true,safeCleanup:true,
+    uvEngine:'both',atlasObjective:'auto'}]);
   await expect(page.locator('.viewport-frame')).toBeVisible();
 });
 
@@ -223,8 +230,20 @@ test('UI rejects stale Tauri/Blender worker before any UV bake',async({page})=>{
 
 test('UV runtime status exposes correct revision and worker fingerprint',async({page})=>{
   await openStudio(page,true);
-  await expect(page.getByTestId('uv-runtime-version')).toContainText('M2.7.1-PROXY-XATLAS');
+  await expect(page.getByTestId('uv-runtime-version')).toContainText('M2.8-XATLAS-TRADEOFF');
   await expect(page.getByTestId('uv-runtime-version')).toContainText('Worker ffffffffff');
   await expect(page.getByTestId('uv-runtime-mismatch')).toHaveCount(0);
   await expect(page.getByTestId('uv-repair-button')).toBeEnabled();
+});
+
+test('fidelity UV tradeoff shows island increase clearly without falsely claiming compact UV',async({page})=>{
+  await openStudio(page,true);
+  await page.getByRole('combobox',{name:'UV atlas hedefi'}).selectOption('fidelity');
+  await page.getByTestId('uv-repair-button').click();
+  await expect(page.getByTestId('uv-repair-success')).toContainText('Doku öncelikli UV');
+  await expect(page.getByTestId('uv-repair-success')).toContainText('262 → 459');
+  await expect(page.getByTestId('uv-repair-success')).toContainText('elle');
+  const calls=await page.evaluate(()=>(window as unknown as {__repairCalls:unknown[]}).__repairCalls);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).toMatchObject({assetId:asset.id,atlasObjective:'fidelity'});
 });

@@ -80,6 +80,37 @@ class XatlasProviderContract(unittest.TestCase):
                 apply_xatlas_uv(mesh,'AI3D_Clean')
         self.assertEqual(tuple(mesh.uv_layers.layer.data[0].uv),(-2.,-2.))
 
+    def test_chart_presets_use_upstream_xatlas_growth_controls(self):
+        # A fake native API exercises the actual provider code without
+        # installing xatlas, Blender or any third-party packages.
+        mesh=TriangleMesh()
+        recorded=[]
+        class Atlas:
+            def add_mesh(self,positions,faces):
+                self.positions=positions
+                self.faces=faces
+            def generate(self,*,chart_options=None,pack_options=None):
+                recorded.append((chart_options,pack_options))
+            def __getitem__(self,index):
+                if index!=0:raise IndexError(index)
+                return (np.arange(len(self.positions),dtype=np.uint32),
+                        self.faces.copy(),self.positions[:,:2].copy())
+        fake=NS(Atlas=Atlas,ChartOptions=lambda:NS(),PackOptions=lambda:NS(),
+                __file__=str(ROOT/"xatlas.cp313-win_amd64.pyd"))
+        with patch.dict(sys.modules,{"xatlas":fake}):
+            joined=apply_xatlas_uv(mesh,"AI3D_Clean",preset="joined",resolution=1024)
+            broad=apply_xatlas_uv(mesh,"AI3D_Clean",preset="broad",resolution=2048)
+        self.assertTrue(joined["available"])
+        self.assertTrue(broad["available"])
+        self.assertEqual(joined["atlasPreset"],"joined")
+        self.assertEqual(broad["atlasPreset"],"broad")
+        self.assertEqual(len(recorded),2)
+        self.assertEqual(recorded[0][0].max_cost,5.0)
+        self.assertEqual(recorded[1][0].max_cost,10.0)
+        self.assertEqual(recorded[0][1].resolution,1024)
+        self.assertEqual(recorded[1][1].resolution,2048)
+        self.assertEqual(recorded[0][1].padding,4)
+
     def test_untrusted_global_xatlas_is_not_selected(self):
         mesh=TriangleMesh()
         with patch.dict(sys.modules,{'xatlas':NS(

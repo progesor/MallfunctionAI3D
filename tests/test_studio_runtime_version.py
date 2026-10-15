@@ -23,7 +23,7 @@ class UvRuntimeSourceContract(unittest.TestCase):
         self.assertIsNotNone(ver_r)
         self.assertIsNotNone(ver_ui)
         self.assertEqual(ver_r.group(1),ver_ui.group(1))
-        self.assertEqual(ver_r.group(1),"M2.7.1-PROXY-XATLAS")
+        self.assertEqual(ver_r.group(1),"M2.8-XATLAS-TRADEOFF")
 
     def test_bundled_python_worker_is_new_proxy_version(self):
         script=WORKER.read_text(encoding="utf-8")

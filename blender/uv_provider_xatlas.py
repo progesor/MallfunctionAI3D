@@ -10,7 +10,38 @@ import os
 from pathlib import Path
 
 
-def apply_xatlas_uv(mesh, clean_uv_name):
+XATLAS_PRESETS=("default","joined","broad")
+
+
+def native_xatlas_chart_options(xatlas,preset):
+    """Chart growth tuned for editable UV chunks, not just low distortion.
+
+    max_cost is the upstream chart-growth ceiling: increasing it can join
+    more faces. These are *candidates*, never independently QA-accepted.
+    """
+    if preset not in XATLAS_PRESETS:
+        raise ValueError("Unsupported xatlas chart preset")
+    if preset=="default":
+        return None
+    chart=xatlas.ChartOptions()
+    if preset=="joined":
+        chart.max_cost=5.0
+        chart.normal_deviation_weight=1.0
+        chart.normal_seam_weight=1.0
+        chart.texture_seam_weight=0.3
+        chart.straightness_weight=2.0
+        chart.max_iterations=2
+    else:
+        chart.max_cost=10.0
+        chart.normal_deviation_weight=0.4
+        chart.normal_seam_weight=0.2
+        chart.texture_seam_weight=0.1
+        chart.straightness_weight=0.5
+        chart.max_iterations=3
+    return chart
+
+
+def apply_xatlas_uv(mesh, clean_uv_name, preset="default", resolution=1024):
     plugin_root=os.environ.get("AI3D_XATLAS_PLUGIN_PATH")
     if not plugin_root:
         return {"available":False,"reason":"App-owned xatlas plugin not installed",
@@ -39,7 +70,20 @@ def apply_xatlas_uv(mesh, clean_uv_name):
         [tuple(int(v) for v in poly.vertices) for poly in mesh.polygons],
         dtype=np.uint32,
     )
-    vmapping, indices, uv_coords = xatlas.parametrize(positions, faces)
+    if preset not in XATLAS_PRESETS:
+        raise ValueError("Invalid xatlas chart preset")
+    if preset=="default":
+        # Keep previous proven xatlas 0.0.11 baseline as the first candidate.
+        vmapping, indices, uv_coords = xatlas.parametrize(positions, faces)
+    else:
+        chart=native_xatlas_chart_options(xatlas,preset)
+        pack=xatlas.PackOptions()
+        pack.padding=4
+        pack.resolution=int(resolution)
+        atlas=xatlas.Atlas()
+        atlas.add_mesh(positions,faces)
+        atlas.generate(chart_options=chart,pack_options=pack)
+        vmapping, indices, uv_coords=atlas[0]
     vmapping = np.asarray(vmapping)
     indices = np.asarray(indices)
     uv_coords = np.asarray(uv_coords)
@@ -91,6 +135,7 @@ def apply_xatlas_uv(mesh, clean_uv_name):
     return {
         "available": True,
         "engine": "xatlas",
+        "atlasPreset": preset,
         "version": str(getattr(xatlas, "__version__", "unknown")),
         "triangles": len(faces),
         "mappedVertices": len(vmapping),
