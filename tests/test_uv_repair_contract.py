@@ -21,7 +21,8 @@ class UVRepairContractTest(unittest.TestCase):
             "mark_curvature_seams", "cut_closed_component", "uv_island_count",
             "bake_image", "preview_material", "emit_uv_layout",
         }.issubset(names))
-        self.assertIn('bpy.ops.uv.unwrap(method="ANGLE_BASED"', source)
+        self.assertIn('bpy.ops.uv.unwrap(', source)
+        self.assertIn('method="ANGLE_BASED"', source)
         self.assertIn('bpy.ops.object.bake(type="NORMAL"', source)
         self.assertIn('bpy.ops.object.bake(type="EMIT"', source)
         self.assertIn('"SourceMaps"', RUST.read_text(encoding="utf-8"))

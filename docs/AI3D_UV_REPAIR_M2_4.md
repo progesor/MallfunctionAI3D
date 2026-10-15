@@ -134,3 +134,38 @@ If it fails again, copy the error details and/or last 40 lines from the
 Repair_Run.log path shown in Studio. This will identify the exact Blender
 operator or PBR input that needs the next correction. No need to repeat any
 ComfyUI generation, LOD or Unity export.
+
+## 2026-10-15 · Blender 5.1.2 UnicodeDecodeError in UV unwrap (Fox)
+
+Real user test confirmed original GLB import, working mesh duplication, and entry
+to `AI3D_UV_STAGE:auto_unwrap`. The Python traceback then failed at
+`uv_island_count(mesh, layer.name)` with `UnicodeDecodeError` while
+reading Blender's UV layer RNA `.name` property. It is NOT evidence of an
+invalid image encoding, missing source GLB, or a texture bake failure:
+none of the bake stages had started.
+
+Root cause: Blender mode switches / BMesh.to_mesh invalidate previously
+retained `MeshUVLoopLayer` RNA handles. Accessing `layer.name` or
+`layer.data` on a stale handle is unsafe.
+
+Fix: capture original and clean UV names as plain Python strings before mesh
+operators, and freshly look up the UV layer by its saved name after every
+BMesh write-back or Edit/Object mode switch. Also apply the same rule to Smart
+UV fallback, and keep the unwrap diagnostic/error stage intact.
+
+Regression added: `tests/test_uv_layer_lifecycle.py` extracts the real
+`new_uv` function and runs it against fake Blender UV layer handles that
+raise `UnicodeDecodeError` if read after mode invalidation. Covers primary
+angle unwrap, Smart UV fallback, and duplicate clean-UV layer names.
+
+Run locally, **not through GitHub CI**:
+```powershell
+python -m unittest discover -s tests -p "test_uv_layer_lifecycle.py"
+python -m unittest discover -s tests -p "test_uv_repair_contract.py"
+python -m py_compile blender/repair_uv_pbr.py
+```
+These offline checks validate the layer lifetime behavior and Python syntax;
+the user's actual Blender 5.1.2 Fox bake is still the required acceptance.
+If the next run advances to `AI3D_UV_STAGE:bake_baseColor`, this specific
+blocker has been passed; follow the next exact log error if another stage
+fails. Original Fox, old texture exports, and prior Unity prefabs are preserved.

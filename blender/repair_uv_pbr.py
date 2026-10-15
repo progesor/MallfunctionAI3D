@@ -218,68 +218,111 @@ def mark_curvature_seams(mesh, threshold_degrees):
 
 def new_uv(target, angle, margin_px, resolution):
     mesh = target.data
-    old_name = mesh.uv_layers.active.name
+    original = mesh.uv_layers.active
+    if original is None:
+        raise RuntimeError("Source mesh has no active UV map")
+    # Blender invalidates RNA layer handles when Edit Mode toggles or BMesh
+    # writes back to a Mesh. Keep PLAIN STRING names, not the layer handles.
+    old_name = str(original.name)
     old_count = uv_island_count(mesh, old_name)
+    new_layer = mesh.uv_layers.new(name="AI3D_Clean")
+    clean_name = str(new_layer.name)
+    # Never access new_layer again after any mesh/bpy operator; look up by name.
     last_error = None
-    # Favor coherent large surfaces. Relax seam threshold if fragments remain
-    # excessive. This is geometry-aware, not semantic AI part labeling.
     for threshold in [angle, min(88, angle + 12), min(88, angle + 22)]:
-        seams, components = mark_curvature_seams(mesh, threshold)
-        layer = mesh.uv_layers.get("AI3D_Clean")
-        if layer is None:
-            layer = mesh.uv_layers.new(name="AI3D_Clean")
-        mesh.uv_layers.active = layer
-        layer.active_render = True
+        seams, components = mark_curvature_seams(target.data, threshold)
+        live_layer = target.data.uv_layers.get(clean_name)
+        if live_layer is None:
+            raise RuntimeError("Clean UV layer vanished after BMesh update: " + clean_name)
+        target.data.uv_layers.active = live_layer
+        live_layer.active_render = True
         bpy.ops.object.select_all(action="DESELECT")
         target.select_set(True)
         bpy.context.view_layer.objects.active = target
         bpy.ops.object.mode_set(mode="EDIT")
-        bpy.ops.mesh.select_all(action="SELECT")
         try:
-            bpy.ops.uv.unwrap(method="ANGLE_BASED", margin_method="FRACTION",
-                              margin=float(margin_px) / resolution)
+            bpy.ops.mesh.select_all(action="SELECT")
+            unwrap_result = bpy.ops.uv.unwrap(
+                method="ANGLE_BASED", margin_method="FRACTION",
+                margin=float(margin_px) / resolution,
+            )
+            if "FINISHED" not in unwrap_result:
+                raise RuntimeError("Blender UV unwrap did not finish")
             bpy.ops.uv.average_islands_scale()
-            bpy.ops.uv.pack_islands(rotate=True, margin_method="FRACTION",
-                                   margin=float(margin_px) / resolution)
-        except Exception as e:
-            last_error = str(e)
+            bpy.ops.uv.pack_islands(
+                rotate=True, margin_method="FRACTION",
+                margin=float(margin_px) / resolution,
+            )
+        except Exception as exc:
+            last_error = str(exc)
+            continue
         finally:
             bpy.ops.object.mode_set(mode="OBJECT")
-        islands = uv_island_count(mesh, layer.name)
-        uv_values = [tuple(loop.uv) for loop in layer.data]
-        valid = bool(uv_values) and all(math.isfinite(u) and math.isfinite(v) and
-                                         -0.001 <= u <= 1.001 and -0.001 <= v <= 1.001
-                                         for u, v in uv_values)
+
+        # The pre-edit live_layer handle is INVALID here on Blender 5.x.
+        # Reacquire the UV layer after switching to Object Mode.
+        live_layer = target.data.uv_layers.get(clean_name)
+        if live_layer is None:
+            raise RuntimeError("Clean UV layer not found after unwrap: " + clean_name)
+        uv_values = [(float(loop.uv[0]), float(loop.uv[1]))
+                     for loop in live_layer.data]
+        islands = uv_island_count(target.data, clean_name)
+        valid = bool(uv_values) and all(
+            math.isfinite(u) and math.isfinite(v)
+            and -0.001 <= u <= 1.001 and -0.001 <= v <= 1.001
+            for u, v in uv_values
+        )
         if valid:
             extent_u = max(u for u, _ in uv_values) - min(u for u, _ in uv_values)
             extent_v = max(v for _, v in uv_values) - min(v for _, v in uv_values)
-            valid = extent_u > .2 and extent_v > .2
+            valid = extent_u > 0.2 and extent_v > 0.2
         if valid and islands <= max(12, math.ceil(old_count * .9)):
-            return old_name, layer.name, {
+            return old_name, clean_name, {
                 "strategy": "curvature-seams-angle-unwrap",
-                "seamAngleDeg": threshold, "seamEdges": seams,
-                "connectedComponents": components, "oldUVIslands": old_count,
+                "seamAngleDeg": threshold,
+                "seamEdges": seams,
+                "connectedComponents": components,
+                "oldUVIslands": old_count,
                 "newUVIslands": islands,
             }
-    # Fallback is explicit and reported, never mislabel Smart UV as semantic UV.
+        last_error = (
+            f"UV unwrap quality check failed: valid={valid}, "
+            f"islands={islands}, original={old_count}"
+        )
+
+    # Explicitly reported fallback. Reacquire by name before AND after ops.
+    live_layer = target.data.uv_layers.get(clean_name)
+    if live_layer is None:
+        raise RuntimeError("Clean UV layer vanished before fallback: " + clean_name)
+    target.data.uv_layers.active = live_layer
+    live_layer.active_render = True
     bpy.ops.object.select_all(action="DESELECT")
     target.select_set(True)
     bpy.context.view_layer.objects.active = target
     bpy.ops.object.mode_set(mode="EDIT")
-    bpy.ops.mesh.select_all(action="SELECT")
-    result = bpy.ops.uv.smart_project(angle_limit=math.radians(86),
-                                      island_margin=float(margin_px) / resolution)
-    bpy.ops.object.mode_set(mode="OBJECT")
+    try:
+        bpy.ops.mesh.select_all(action="SELECT")
+        result = bpy.ops.uv.smart_project(
+            angle_limit=math.radians(86),
+            island_margin=float(margin_px) / resolution,
+        )
+    finally:
+        bpy.ops.object.mode_set(mode="OBJECT")
     if "FINISHED" not in result:
-        raise RuntimeError("UV Smart fallback also failed")
-    points = [tuple(loop.uv) for loop in layer.data]
-    if not points or max(u for u,v in points)-min(u for u,v in points)<.2 or \
-       max(v for u,v in points)-min(v for u,v in points)<.2:
-        raise RuntimeError("Generated UV atlas is degenerate; not creating repaired asset")
-    return old_name, layer.name, {
+        raise RuntimeError("UV Smart fallback did not finish")
+    live_layer = target.data.uv_layers.get(clean_name)
+    if live_layer is None:
+        raise RuntimeError("Clean UV layer missing after fallback: " + clean_name)
+    points = [(float(loop.uv[0]), float(loop.uv[1]))
+              for loop in live_layer.data]
+    if not points or max(u for u, v in points) - min(u for u, v in points) < .2 or \
+       max(v for u, v in points) - min(v for u, v in points) < .2:
+        raise RuntimeError("Generated UV atlas is degenerate; original asset remains unchanged")
+    return old_name, clean_name, {
         "strategy": "smart-project-fallback",
-        "reason": last_error or "Adaptive unwrap failed validity/island-count checks",
-        "oldUVIslands": old_count, "newUVIslands": uv_island_count(mesh, layer.name),
+        "reason": last_error or "Adaptive unwrap did not pass quality checks",
+        "oldUVIslands": old_count,
+        "newUVIslands": uv_island_count(target.data, clean_name),
     }
 
 
