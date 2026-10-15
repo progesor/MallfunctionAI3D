@@ -206,3 +206,31 @@ The real Blender 5.1.2 Fox export is still the acceptance gate. Retry the
 automatic UV/PBR button on the same source asset: each attempt generates a
 fresh version. No ComfyUI work is needed. \`AI3D_GLTF_STAGING:\` and
 \`AI3D_GLTF_ARCHIVED:\` in the new Repair_Run.log confirm staging and copy.
+
+
+## 2026-10-15 · Blender report acceptance rejected after GLB archive succeeded
+
+The user's third real run reached the Rust stage after Blender wrote
+Repair_Report.json and staged geometry.glb. The Studio displayed the generic
+"Blender bake raporu geometri/UV kabulünü geçemedi" error, hiding WHICH
+report field differed from the source.
+
+The report validator has been extracted into verify_repair_report:
+- Prints source GLB triangle count, Blender input/output triangle values,
+  sourceUntouched and old/new UV island counts.
+- Gives an explicit list of failing conditions and the exact existing
+  Repair_Report.json path.
+- Retains strict topology and UV regression rejection. It does **not**
+  automatically accept a mismatch or overwrite any source/version.
+- Includes synthetic unit cases for valid reports, mismatched triangles,
+  missing UV data and increased islands.
+
+The current failed UV repair folder is preserved. **Before re-running the
+full five-map bake, open/upload Repair_Report.json from that folder**. Its
+JSON fields allow targeted diagnosis without another long Blender run.
+
+Read only, on user's Windows workstation:
+  Get-Content -LiteralPath "<existing UV repair folder>\Repair_Report.json" -Raw
+
+This is a diagnostic hotfix, not a declaration that the Fox repair passed.
+No Windows CI was triggered; the branch's workflow remains manual-only.

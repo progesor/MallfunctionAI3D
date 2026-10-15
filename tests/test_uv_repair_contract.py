@@ -49,7 +49,9 @@ class UVRepairContractTest(unittest.TestCase):
         self.assertIn('"metallicRoughnessTexture":{"index":1}', rust)
         self.assertIn('state.store_asset(&prepared.source', rust)
         self.assertIn("verify_sha256(&file_path,&source_sha)", rust)
-        self.assertIn("if new_islands==0 || new_islands>old_islands", rust)
+        self.assertIn("fn verify_repair_report(", rust)
+        self.assertIn("Blender trianglesBefore=", rust)
+        self.assertIn("new UV island count is greater than source count", rust)
 
 
 class MissingReportDiagnosticsRegression(unittest.TestCase):

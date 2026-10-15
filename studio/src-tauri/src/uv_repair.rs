@@ -207,6 +207,39 @@ fn read_blender_result(version:&Path, exit_success:bool, exit_code:Option<i32>, 
             report_path.display(),version.join("Repair_Run.log").display()))
 }
 
+/// Validate the Blender report without silently accepting topology changes.
+/// Keep exact observed values in the UI error so a completed five-map bake
+/// can be diagnosed from its existing Repair_Report.json without rerunning it.
+fn verify_repair_report(report:&Value, source_triangles:u64, version:&Path) -> StudioResult<(u64,u64)> {
+    let untouched=report.get("sourceUntouched").and_then(Value::as_bool);
+    let before=report.get("trianglesBefore").and_then(Value::as_u64);
+    let after=report.get("trianglesAfter").and_then(Value::as_u64);
+    let old=report.pointer("/uv/oldUVIslands").and_then(Value::as_u64);
+    let new=report.pointer("/uv/newUVIslands").and_then(Value::as_u64);
+    let mut failures=Vec::new();
+    if untouched!=Some(true) {failures.push("sourceUntouched != true");}
+    if before!=Some(source_triangles) {failures.push("Blender input triangle count != source GLB");}
+    if after!=Some(source_triangles) {failures.push("Blender output triangle count != source GLB");}
+    if old.is_none() {failures.push("uv.oldUVIslands missing or not a nonnegative integer");}
+    if new.is_none() {failures.push("uv.newUVIslands missing or not a nonnegative integer");}
+    if old==Some(0) {failures.push("source has zero UV islands");}
+    if new==Some(0) {failures.push("repaired atlas has zero UV islands");}
+    if matches!((old,new),(Some(a),Some(b)) if b>a) {
+        failures.push("new UV island count is greater than source count");
+    }
+    if !failures.is_empty() {
+        return Err(format!(
+            "UV/PBR kabul kontrolü: {}. Kaynak GLB triangles={source_triangles}; \
+             Blender trianglesBefore={before:?}, trianglesAfter={after:?}; \
+             sourceUntouched={untouched:?}; UV oldUVIslands={old:?}, newUVIslands={new:?}. \
+             Geometriyi değiştiren sonuç otomatik kabul edilmedi. \
+             Mevcut rapor: {}. Beş haritayı yeniden bake etmeden önce raporu paylaş.",
+            failures.join("; "),version.join("Repair_Report.json").display()
+        ));
+    }
+    Ok((old.expect("checked oldUVIslands"),new.expect("checked newUVIslands")))
+}
+
 fn background_repair(
     asset_dir:PathBuf, file_path:PathBuf, source_sha:String, texture_version:String,
     blender:String, resolution:u32, angle:u32, preset:String, weld:bool,
@@ -266,18 +299,7 @@ fn background_repair(
         format!("Blender logu yazılamadı: {}: {e}",log_path.display()))?;
     let report=read_blender_result(&version,execution.status.success(),execution.status.code(),&log)?;
     let source_triangles=inspect_glb(&original)?.0;
-    if report.get("sourceUntouched").and_then(Value::as_bool)!=Some(true) ||
-        report.get("trianglesBefore").and_then(Value::as_u64)!=Some(source_triangles) ||
-        report.get("trianglesAfter").and_then(Value::as_u64)!=Some(source_triangles) ||
-        report.pointer("/uv/oldUVIslands").and_then(Value::as_u64).is_none() ||
-        report.pointer("/uv/newUVIslands").and_then(Value::as_u64).is_none() {
-        return Err(format!("Blender bake raporu geometri/UV kabulünü geçemedi: {}",version.display()));
-    }
-    let old_islands=report.pointer("/uv/oldUVIslands").and_then(Value::as_u64).unwrap();
-    let new_islands=report.pointer("/uv/newUVIslands").and_then(Value::as_u64).unwrap();
-    if new_islands==0 || new_islands>old_islands {
-        return Err(format!("Yeni atlas UV ada sayısını azaltmadı ({old_islands} → {new_islands}); kaynak değişmedi. Bak: {}",version.display()));
-    }
+    let (old_islands,new_islands)=verify_repair_report(&report,source_triangles,&version)?;
     let (_,base)=read_baked_png(&version,"baseColor",resolution)?;
     let (_,normal)=read_baked_png(&version,"normal",resolution)?;
     let (metal,_)=read_baked_png(&version,"metallic",resolution)?;
@@ -379,6 +401,27 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    #[test]fn rejects_bad_blender_report_with_exact_observed_values() {
+        let path=Path::new("example/uv_repairs/uuid");
+        let good=json!({"sourceUntouched":true,"trianglesBefore":7998,
+            "trianglesAfter":7998,"uv":{"oldUVIslands":168,"newUVIslands":18}});
+        assert_eq!(verify_repair_report(&good,7998,path).unwrap(),(168,18));
+        let bad=json!({"sourceUntouched":true,"trianglesBefore":7996,
+            "trianglesAfter":7996,"uv":{"oldUVIslands":168,"newUVIslands":18}});
+        let error=verify_repair_report(&bad,7998,path).unwrap_err();
+        assert!(error.contains("Kaynak GLB triangles=7998"));
+        assert!(error.contains("trianglesBefore=Some(7996)"));
+        assert!(error.contains("trianglesAfter=Some(7996)"));
+        assert!(error.contains("Repair_Report.json"));
+        let missing=json!({"sourceUntouched":true,"trianglesBefore":7998,
+            "trianglesAfter":7998,"uv":{"oldUVIslands":168}});
+        assert!(verify_repair_report(&missing,7998,path).unwrap_err()
+            .contains("newUVIslands missing"));
+        let worse=json!({"sourceUntouched":true,"trianglesBefore":7998,
+            "trianglesAfter":7998,"uv":{"oldUVIslands":13,"newUVIslands":40}});
+        assert!(verify_repair_report(&worse,7998,path).unwrap_err()
+            .contains("greater than source"));
+    }
     #[test]fn orm_preserves_gltf_semantics_and_plush_cleanup() {
         let metal=RgbaImage::from_pixel(1,1,Rgba([150,150,150,255]));
         let rough=RgbaImage::from_pixel(1,1,Rgba([35,35,35,255]));
