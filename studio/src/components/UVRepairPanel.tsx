@@ -363,7 +363,7 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
         Bu atlas PBR/UV kalite kapısını GEÇMEDİ. Blender bake dosyaları kurtarıldı;
         orijinal GLB korundu. Bu taslağın Unity export'u engellendi.
         Oyun için kaynak modeli veya kalite kabulünden geçen yeni bir sürümü kullan.
-      </p>
+      </p>}
       <span>UV adası: {result.oldIslands} → {result.newIslands} · {result.strategy==='smart-project-fallback'?'Yedek UV yöntemi':'Açı + topoloji ile unwrap'}</span>
       {result.asset.triangleCount!==asset.triangleCount&&
         <p className="mini-disclaimer" role="note">
