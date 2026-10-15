@@ -17,7 +17,12 @@ import argparse
 import heapq
 import json
 import math
+import ntpath
+import os
+import shutil
+import struct
 import sys
+import tempfile
 import traceback
 from pathlib import Path
 
@@ -456,6 +461,80 @@ def bake_image(target, role, source_image, old_uv, new_uv, output, resolution, m
     return img
 
 
+def blender_compatible_gltf_path(path, windows=None):
+    r"""Reject paths the Blender 5.1 glTF addon cannot safely pass to makedirs.
+
+    The Blender glTF add-on appends a slash to its file directory, breaking
+    Windows extended-length paths such as \\?\C:\some\archive\version.
+    Only local short native paths may be passed to that add-on. The source
+    and archive themselves may still use extended-length paths for Python I/O.
+    """
+    if windows is None:
+        windows = os.name == "nt"
+    name = os.fspath(path)
+    if windows:
+        name = ntpath.normpath(name)
+        if name.startswith("\\\\?\\UNC\\"):
+            raise ValueError("Blender glTF staging requires a local drive, not UNC")
+        if name.startswith("\\\\?\\"):
+            name = name[4:]
+        drive, _ = ntpath.splitdrive(name)
+        if not drive or not ntpath.isabs(name) or name.startswith("\\\\"):
+            raise ValueError("Blender glTF staging path must be on a local absolute drive")
+        if len(name) >= 240:
+            raise ValueError(
+                "Blender glTF staging path exceeds safe native Windows path length"
+            )
+    else:
+        name = os.path.abspath(name)
+    return name
+
+
+def stage_geometry_glb(destination, exporter):
+    r"""Export in a short private temp folder, then copy to the versioned archive.
+
+    Blender 5.1's glTF exporter fails with WinError 123 when its destination
+    is prefixed with \\?\. The archive destination is intentionally unchanged,
+    and copy uses Python file operations that support Windows long paths.
+    """
+    destination = Path(destination)
+    if not destination.parent.is_dir():
+        raise FileNotFoundError("UV Repair archive folder missing: " + str(destination.parent))
+    if destination.exists():
+        raise FileExistsError("Cannot overwrite existing repaired geometry: " + str(destination))
+    with tempfile.TemporaryDirectory(prefix="ai3d_uv_glb_") as temp_dir:
+        staging = blender_compatible_gltf_path(Path(temp_dir) / "geometry.glb")
+        print("AI3D_GLTF_STAGING:" + staging, flush=True)
+        result = exporter(
+            filepath=staging,
+            export_format="GLB",
+            use_selection=True,
+            export_materials="NONE",
+            export_apply=False,
+            export_normals=True,
+            export_texcoords=True,
+        )
+        if "FINISHED" not in result:
+            raise RuntimeError("Blender glTF exporter did not finish")
+        staged = Path(staging)
+        if not staged.is_file():
+            raise RuntimeError("Blender glTF exporter wrote no geometry: " + staging)
+        size = staged.stat().st_size
+        with staged.open("rb") as source:
+            header = source.read(12)
+        if size < 28 or len(header) != 12 or header[:4] != b"glTF" or \
+           struct.unpack_from("<I", header, 4)[0] != 2 or \
+           struct.unpack_from("<I", header, 8)[0] != size:
+            raise RuntimeError("Blender staged GLB header/length validation failed")
+        # 'xb' prevents silent overwrite even if a file appeared after the
+        # initial check. Only the unique, newly generated version is written.
+        with staged.open("rb") as source, destination.open("xb") as target:
+            shutil.copyfileobj(source, target, length=1024 * 1024)
+        if destination.stat().st_size != size:
+            raise RuntimeError("Blender GLB archive copy size mismatch")
+    print("AI3D_GLTF_ARCHIVED:" + str(destination), flush=True)
+
+
 def main():
     args = parse_args()
     if not 35 <= args.angle <= 88 or not 4 <= args.margin <= 48:
@@ -569,11 +648,7 @@ def main():
         target.select_set(True)
         bpy.context.view_layer.objects.active = target
         stage("export_uv_geometry")
-        bpy.ops.export_scene.gltf(filepath=str(output / "geometry.glb"), export_format="GLB",
-                                  use_selection=True, export_materials="NONE",
-                                  export_apply=False, export_normals=True, export_texcoords=True)
-        if not (output / "geometry.glb").is_file():
-            raise RuntimeError("Blender did not export geometry.glb")
+        stage_geometry_glb(output / "geometry.glb", bpy.ops.export_scene.gltf)
         report = {
             "schemaVersion": 1,
             "sourceUntouched": True,

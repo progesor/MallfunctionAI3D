@@ -26,6 +26,11 @@ class UVRepairContractTest(unittest.TestCase):
         self.assertIn('bpy.ops.object.bake(type="NORMAL"', source)
         self.assertIn('bpy.ops.object.bake(type="EMIT"', source)
         self.assertIn('"SourceMaps"', RUST.read_text(encoding="utf-8"))
+        # Blender 5.1 glTF exporter cannot write directly to Windows long
+        # canonicalized archive paths (\\\\?\\C:\\...). Keep it in short temp.
+        self.assertIn('stage_geometry_glb(output / "geometry.glb", bpy.ops.export_scene.gltf)', source)
+        self.assertIn('tempfile.TemporaryDirectory(prefix="ai3d_uv_glb_")', source)
+        self.assertIn('destination.open("xb")', source)
 
     def test_worker_does_not_generate_ai_jobs_or_remesh_models(self):
         source = WORKER.read_text(encoding="utf-8")

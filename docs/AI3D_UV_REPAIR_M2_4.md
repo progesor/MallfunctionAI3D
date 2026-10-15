@@ -169,3 +169,40 @@ the user's actual Blender 5.1.2 Fox bake is still the required acceptance.
 If the next run advances to `AI3D_UV_STAGE:bake_baseColor`, this specific
 blocker has been passed; follow the next exact log error if another stage
 fails. Original Fox, old texture exports, and prior Unity prefabs are preserved.
+
+## 2026-10-15 · Blender 5.1 glTF WinError 123 (after successful UV & 5 maps)
+
+Confirmed from the real workstation log: all five PBR bakes and
+Repair_Working.blend save passed, but glTF exporter raised WinError 123 at
+\`AI3D_UV_STAGE:export_uv_geometry\`.
+
+**Cause:** Studio's Rust PathBuf canonicalization supplies Windows paths with
+the \`\\?\C:\...\` extended-length prefix. Python reads/writes and Blender
+blend saving already supported these paths. The Blender 5.1 glTF addon
+normalizes the target directory with a trailing '/' and then calls
+\`os.makedirs\` on the mixed extended-prefix path, which Windows rejects.
+
+**Fix:** Only geometry.glb generation now uses a private short
+\`tempfile.TemporaryDirectory(prefix="ai3d_uv_glb_")\` outside the archive,
+passing the native local-drive filename to the Blender glTF add-on. The
+temporary output is checked for glTF magic, version and byte length, then
+copied with exclusive creation to the **newly versioned archive** (Windows
+long paths are supported by ordinary Python file IO). The temp folder is
+cleaned automatically. No source GLB, 5-map input, working .blend, existing
+LOD, or Unity prefab is edited. The temporary file is not a public asset.
+
+Regression: \`tests/test_blender_gltf_staging.py\` loads the REAL two helper
+functions via AST without importing Blender; it checks a representative
+\`\\?\C:\Users\proge\...\` path, UNC/overlong input refusal, short-path
+staging with a synthetic GLB, immutable destination, and invalid/cancelled
+GLB export rejection.
+
+Offline (without GitHub Actions):
+  python -m unittest discover -s tests -p "test_blender_gltf_staging.py"
+  python -m unittest discover -s tests -p "test_uv_repair_contract.py"
+  python -m py_compile blender/repair_uv_pbr.py
+
+The real Blender 5.1.2 Fox export is still the acceptance gate. Retry the
+automatic UV/PBR button on the same source asset: each attempt generates a
+fresh version. No ComfyUI work is needed. \`AI3D_GLTF_STAGING:\` and
+\`AI3D_GLTF_ARCHIVED:\` in the new Repair_Run.log confirm staging and copy.
