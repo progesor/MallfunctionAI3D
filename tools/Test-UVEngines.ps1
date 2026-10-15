@@ -7,9 +7,31 @@ Set-Location $root
 $python=Get-Command py -ErrorAction SilentlyContinue
 if ($python) { $pythonExe=$python.Source; $pythonPrefix=@('-3') }
 else {
-    $python=Get-Command python -ErrorAction Stop
-    $pythonExe=$python.Source
-    $pythonPrefix=@()
+    $python=Get-Command python -ErrorAction SilentlyContinue
+    if ($python) {
+        $pythonExe=$python.Source
+        $pythonPrefix=@()
+    } else {
+        # Windows workstations may have Blender's Python without py/python
+        # in PATH. Reuse its bundled 3.13 interpreter for offline tests.
+        $blenderBase=Join-Path $env:ProgramFiles 'Blender Foundation'
+        $choices=@()
+        if (Test-Path -LiteralPath $blenderBase) {
+            $choices=@(Get-ChildItem -LiteralPath $blenderBase -Directory -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    Get-ChildItem -LiteralPath $_.FullName -Directory -ErrorAction SilentlyContinue |
+                        ForEach-Object {
+                            Join-Path $_.FullName 'python\bin\python.exe'
+                        }
+                } | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf} |
+                Sort-Object -Descending)
+        }
+        if (-not $choices -or $choices.Count -eq 0) {
+            throw 'Python bulunamadı. Sistem Python 3 veya Blender 5.1 kurulumu gerekli.'
+        }
+        $pythonExe=$choices[0]
+        $pythonPrefix=@()
+    }
 }
 $files=@(
     'test_uv_topology.py',
