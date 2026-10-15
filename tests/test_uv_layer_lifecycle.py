@@ -155,7 +155,7 @@ class UVModeSwitchRegression(unittest.TestCase):
         self.assertEqual(clean, "AI3D_Clean")
         self.assertEqual(report["strategy"], "curvature-seams-quality-ranked")
         self.assertEqual(report["seamAngleDeg"], 38)
-        self.assertEqual(len(report["triedPlans"]), 3)
+        self.assertEqual(len(report["triedPlans"]), 5)
         self.assertEqual(report["selectionReason"],
                          "lowest-p95-stretch-before-island-count")
         self.assertEqual(report["newUVIslands"], 12)

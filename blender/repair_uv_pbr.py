@@ -37,6 +37,7 @@ if _worker_root not in sys.path:
     sys.path.insert(0, _worker_root)
 from uv_texture_fidelity import (
     ROLE_LIMITS, compare_surface_maps, mesh_uv_stretch,
+    evaluate_uv_stretch, triangle_uv_stretch,
     REFERENCE_FACE_ID, surface_uv_pairs_reference,
 )
 
@@ -294,7 +295,10 @@ def new_uv(target, angle, margin_px, resolution):
                      and max(v for _, v in uv_values) - min(v for _, v in uv_values) > .2)
         metrics = mesh_uv_stretch(target.data, clean_name)
         p95 = metrics.get("p95Anisotropy")
-        good = (valid and count > 0 and count <= old_count
+        # Explore an additional limited island budget when a lower-stretch
+        # atlas needs one or two extra seams. Publication still requires
+        # actual island improvement and the geometric quality gate.
+        good = (valid and count > 0 and count <= math.ceil(old_count * 1.35)
                 and p95 is not None and math.isfinite(p95))
         candidate = {
             "seamAngleDeg": threshold,
@@ -310,7 +314,8 @@ def new_uv(target, angle, margin_px, resolution):
         return candidate, score
 
     angles = list(dict.fromkeys([
-        angle, max(35, angle - 12), max(35, angle - 24),
+        angle, max(20, angle - 12), max(20, angle - 24),
+        max(20, angle - 36), max(20, angle - 48),
     ]))
     for threshold in angles:
         try:
@@ -383,6 +388,40 @@ def new_uv(target, angle, margin_px, resolution):
         "triedPlans": attempted,
     }
 
+
+
+def emit_uv_stress_layout(mesh, layer_name, output):
+    """SVG diagnostic with distorted triangles emphasized red/orange.
+
+    Useful when a global PBR mean passes but the stylized tail is striped.
+    This does NOT alter UV coordinates or source texture maps.
+    """
+    mesh.calc_loop_triangles()
+    uv_layer=mesh.uv_layers[layer_name].data
+    pieces=[
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">',
+        '<rect x="0" y="0" width="1024" height="1024" fill="#14202b"/>',
+    ]
+    for tri in mesh.loop_triangles:
+        loops=[int(i) for i in tri.loops]
+        points=[(float(uv_layer[i].uv[0]),float(uv_layer[i].uv[1]))
+                for i in loops]
+        verts=[mesh.vertices[mesh.loops[i].vertex_index].co
+               for i in loops]
+        world=[float((verts[(i+1)%3]-verts[i]).length) for i in range(3)]
+        tex=[math.hypot(points[(i+1)%3][0]-points[i][0],
+                        points[(i+1)%3][1]-points[i][1]) for i in range(3)]
+        anisotropy=triangle_uv_stretch(world,tex)
+        if anisotropy is None:
+            continue
+        color=("#ee5268" if anisotropy>=6 else
+               "#ff9b4a" if anisotropy>=3 else
+               "#e1ca66" if anisotropy>=2 else "#376c72")
+        polygon=" ".join(f"{u*1024:.2f},{(1-v)*1024:.2f}" for u,v in points)
+        pieces.append(f'<polygon points="{polygon}" fill="{color}" '
+                      'fill-opacity=".82" stroke="#182630" stroke-width=".24"/>')
+    pieces.append('</svg>')
+    output.write_text("\n".join(pieces),encoding="utf-8")
 
 
 def emit_uv_layout(mesh, layer_name, output):
@@ -755,21 +794,23 @@ def sample_texture_fidelity(target, source_images, baked_images,
             "PASS" if item["passed"] else "FAIL"), flush=True)
     stretch_old = mesh_uv_stretch(reference_mesh, old_uv)
     stretch_new = mesh_uv_stretch(mesh, new_uv)
-    passed = all(item["passed"] for item in data.values())
+    stretch_gate = evaluate_uv_stretch(stretch_old, stretch_new)
+    passed = all(item["passed"] for item in data.values()) and stretch_gate["passed"]
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "evaluated": True,
         "passed": passed,
         "method": "same-3d-surface-barycentric-UV-reprojection",
         "sampleCount": len(pairs),
         "maps": data,
         "uvStretch": {"source": stretch_old, "rebuilt": stretch_new},
+        "uvStretchGate": stretch_gate,
         "sourceUvProvenance": uv_provenance,
         "normalValidation": "tangent-space-rebake; visual-check-required",
         "qualityStatus": "passed" if passed else "needs-review",
-        "note": "The four comparable PBR roles are scored separately. "
-                "A reduced island count alone cannot pass. "
-                "World-space normal rendering and tail seam need visual approval.",
+        "note": "M2.5.1: per-map MAE/P95/P99/severe hotspots AND "
+                "UV P95/maximum distortion gate are mandatory. "
+                "Tangents and tail appearance still need visual approval.",
     }
 
 
@@ -907,9 +948,15 @@ def main():
         quality = sample_texture_fidelity(
             target, source_images, saved_quality_images,
             reference_mesh, old_uv, new_uv_name, surface_pairs, uv_provenance)
+        islands_improved = (uv_report["newUVIslands"] < uv_report["oldUVIslands"])
+        quality["uvAtlasSimplified"] = islands_improved
+        quality["passed"] = bool(quality["passed"] and islands_improved)
+        quality["qualityStatus"] = "passed" if quality["passed"] else "needs-review"
         (output / "Texture_Quality.json").write_text(
             json.dumps(quality, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8")
+        emit_uv_stress_layout(target.data, new_uv_name,
+                              output / "UV_Stress.svg")
         emit_uv_layout(target.data, new_uv_name, output / "UV_Layout.svg")
         # The new UV is first/active for glTF export. The old UV remains
         # available in the working blend for seam edits and comparisons.
@@ -951,6 +998,7 @@ def main():
             "heightBaked": False,
             "manualEditBlend": "Repair_Working.blend",
             "uvLayout": "UV_Layout.svg",
+            "uvStressLayout": "UV_Stress.svg",
             "warnings": ["Automatic seams use curvature/topology, not AI semantic limb labeling.",
                          "Inspect normal-map direction and tail/body texture seams in the 3D viewer."]
         }

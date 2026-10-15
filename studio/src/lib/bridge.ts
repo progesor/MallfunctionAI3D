@@ -74,6 +74,7 @@ export interface UvRepairResult {
   reportPath: string;
   workingBlend: string;
   uvLayout: string;
+  uvStressLayout?: string;
   strategy: string;
   oldIslands: number;
   newIslands: number;
@@ -82,9 +83,13 @@ export interface UvRepairResult {
     passed: boolean;
     qualityStatus: string;
     maps: Record<string, { role: string; sampleCount: number;
-      meanAbsoluteError: number; p95AbsoluteError: number; passed: boolean }>;
-    uvStretch?: { source: { p95Anisotropy: number | null };
-      rebuilt: { p95Anisotropy: number | null } };
+      meanAbsoluteError: number; p95AbsoluteError: number;
+      p99AbsoluteError?: number; severeSampleFraction?: number; passed: boolean }>;
+    uvStretch?: { source: { p95Anisotropy: number | null; maximumAnisotropy?: number };
+      rebuilt: { p95Anisotropy: number | null; maximumAnisotropy?: number } };
+    uvStretchGate?: { passed: boolean; p95Ratio: number; maximumRatio: number;
+      allowedP95Anisotropy: number; allowedMaximumAnisotropy: number };
+    uvAtlasSimplified?: boolean;
   };
   meshHealth?: {
     source: { boundaryEdges: number; nonManifoldEdges: number;

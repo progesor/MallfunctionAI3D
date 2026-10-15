@@ -19,11 +19,62 @@ BARYCENTRIC_SAMPLES = (
 # Conservative pilot gates. A failed threshold never deletes the work or
 # silently produces a "clean" library asset; only its quality status changes.
 ROLE_LIMITS = {
-    "baseColor": {"meanAbsoluteError": 0.065, "p95AbsoluteError": 0.180},
-    "metallic": {"meanAbsoluteError": 0.075, "p95AbsoluteError": 0.210},
-    "roughness": {"meanAbsoluteError": 0.075, "p95AbsoluteError": 0.210},
-    "occlusion": {"meanAbsoluteError": 0.080, "p95AbsoluteError": 0.220},
+    "baseColor": {"meanAbsoluteError": 0.065, "p95AbsoluteError": 0.180,
+                  "p99AbsoluteError": 0.250, "severeErrorThreshold": 0.30,
+                  "maxSevereSampleFraction": 0.010},
+    "metallic": {"meanAbsoluteError": 0.075, "p95AbsoluteError": 0.210,
+                 "p99AbsoluteError": 0.270, "severeErrorThreshold": 0.35,
+                 "maxSevereSampleFraction": 0.015},
+    "roughness": {"meanAbsoluteError": 0.075, "p95AbsoluteError": 0.210,
+                  "p99AbsoluteError": 0.270, "severeErrorThreshold": 0.35,
+                  "maxSevereSampleFraction": 0.015},
+    "occlusion": {"meanAbsoluteError": 0.080, "p95AbsoluteError": 0.220,
+                  "p99AbsoluteError": 0.280, "severeErrorThreshold": 0.35,
+                  "maxSevereSampleFraction": 0.015},
 }
+
+# The clean Fox source is p95=1.24353, max=8.62372; rebuilt is p95=3.67474
+# and max=88.76794. Four texture means passing MUST NOT override this loss.
+STRETCH_LIMITS = {"maxP95Ratio": 1.80, "maxMaximumRatio": 3.0,
+                  "minAbsoluteP95": 1.9, "minAbsoluteMaximum": 24.0}
+
+
+def evaluate_uv_stretch(source, rebuilt):
+    """Fail safely if a newly unwrapped atlas distorts geometry far more.
+
+    The ratio uses source UV as its baseline; a poor original UV must not be
+    used to claim arbitrary improvements, and a handful of zero-area edges
+    cannot be silently ignored. The thresholds are versioned pilot policy.
+    """
+    required = ("p95Anisotropy", "maximumAnisotropy", "trianglesSampled")
+    for item in (source, rebuilt):
+        if any(item.get(k) is None for k in required):
+            raise ValueError("UV stretch report missing metrics")
+        if not (isinstance(item["trianglesSampled"],int) and item["trianglesSampled"]>0):
+            raise ValueError("Invalid UV stretch triangle count")
+        if any(not math.isfinite(float(item[k])) or float(item[k]) < 1.
+               for k in required[:2]):
+            raise ValueError("Non-finite or impossible UV anisotropy")
+    if source["trianglesSampled"] != rebuilt["trianglesSampled"]:
+        raise ValueError("UV stretch did not evaluate identical source geometry")
+    p95_ratio = rebuilt["p95Anisotropy"] / source["p95Anisotropy"]
+    max_ratio = rebuilt["maximumAnisotropy"] / source["maximumAnisotropy"]
+    allowed_p95 = max(STRETCH_LIMITS["minAbsoluteP95"],
+                      source["p95Anisotropy"] * STRETCH_LIMITS["maxP95Ratio"])
+    allowed_max = max(STRETCH_LIMITS["minAbsoluteMaximum"],
+                      source["maximumAnisotropy"] * STRETCH_LIMITS["maxMaximumRatio"])
+    passed = (rebuilt["p95Anisotropy"]<=allowed_p95 and
+              rebuilt["maximumAnisotropy"]<=allowed_max and
+              rebuilt.get("degenerateUvTriangles",0)==0)
+    return {
+        "passed": passed, "p95Ratio": round(p95_ratio,6),
+        "maximumRatio": round(max_ratio,6),
+        "allowedP95Anisotropy": round(allowed_p95,5),
+        "allowedMaximumAnisotropy": round(allowed_max,5),
+        "limits": dict(STRETCH_LIMITS),
+        "note": "This is a geometric UV distortion gate, separate from PBR "
+                "pixel MAE. Large tail stretch is never rescued by good averages."
+    }
 
 
 def bilinear_rgba(buffer, width, height, u, v, repeat=True):
@@ -104,14 +155,20 @@ def compare_surface_maps(uv_pairs, source_pixels, source_size,
     count = len(errors)
     mean = sum(errors) / count
     p95 = errors[min(count - 1, math.ceil(count * .95) - 1)]
+    p99 = errors[min(count - 1, math.ceil(count * .99) - 1)]
     limit = ROLE_LIMITS[role]
+    severe_fraction = sum(e > limit["severeErrorThreshold"] for e in errors) / count
     passed = (mean <= limit["meanAbsoluteError"]
-              and p95 <= limit["p95AbsoluteError"])
+              and p95 <= limit["p95AbsoluteError"]
+              and p99 <= limit["p99AbsoluteError"]
+              and severe_fraction <= limit["maxSevereSampleFraction"])
     return {
         "role": role,
         "sampleCount": count,
         "meanAbsoluteError": round(mean, 6),
         "p95AbsoluteError": round(p95, 6),
+        "p99AbsoluteError": round(p99, 6),
+        "severeSampleFraction": round(severe_fraction, 6),
         "maximumError": round(errors[-1], 6),
         "limits": dict(limit),
         "passed": passed,
@@ -142,6 +199,7 @@ def mesh_uv_stretch(mesh, uv_name):
     uv = mesh.uv_layers[uv_name].data
     mesh.calc_loop_triangles()
     vals = []
+    degenerate_uv = 0
     for tri in mesh.loop_triangles:
         corners = [int(i) for i in tri.loops]
         verts = [mesh.vertices[mesh.loops[idx].vertex_index].co for idx in corners]
@@ -151,16 +209,22 @@ def mesh_uv_stretch(mesh, uv_name):
                              float(coords[(i+1) % 3][1] - coords[i][1]))
                   for i in range(3)]
         score = triangle_uv_stretch(edge3, edgeuv)
-        if score is not None and math.isfinite(score):
+        if score is None:
+            continue  # degenerate imported WORLD-space triangle
+        if not math.isfinite(score):
+            degenerate_uv += 1
+        else:
             vals.append(score)
     if not vals:
         return {"trianglesSampled": 0, "p95Anisotropy": None,
-                "maximumAnisotropy": None}
+                "maximumAnisotropy": None,
+                "degenerateUvTriangles": degenerate_uv}
     vals.sort()
-    return {"trianglesSampled": len(vals),
+    return {"trianglesSampled": len(vals) + degenerate_uv,
             "p95Anisotropy": round(vals[min(len(vals)-1,
                                           math.ceil(.95 * len(vals))-1)], 5),
-            "maximumAnisotropy": round(vals[-1], 5)}
+            "maximumAnisotropy": round(vals[-1], 5),
+            "degenerateUvTriangles": degenerate_uv}
 
 
 REFERENCE_FACE_ID = "AI3D_REPAIR_SOURCE_FACE_ID"

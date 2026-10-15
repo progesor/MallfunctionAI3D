@@ -194,12 +194,20 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
         </p>}
       {result.quality?.passed&&<div className="uv-repair-quality" data-testid="uv-repair-quality">
         <strong>3D yüzey texture sadakati: otomatik kontrolden geçti</strong>
+        {result.quality.uvStretchGate&&<p className="block-description">
+          UV gerilme oranı: P95 ×{result.quality.uvStretchGate.p95Ratio.toFixed(2)},
+          maksimum ×{result.quality.uvStretchGate.maximumRatio.toFixed(2)}
+          {result.quality.uvStretchGate.passed ? ' — kontrol edildi' : ' — DİKKAT'}
+        </p>}
         {Object.values(result.quality.maps).map(map=><div key={map.role} className="meta-row">
           <span>{map.role}</span>
-          <strong>MAE {(map.meanAbsoluteError*100).toFixed(2)}% · P95 {(map.p95AbsoluteError*100).toFixed(1)}%</strong>
+          <strong>Ort. {(map.meanAbsoluteError*100).toFixed(2)}% ·
+            P95 {(map.p95AbsoluteError*100).toFixed(1)}% ·
+            P99 {map.p99AbsoluteError === undefined ? '—' : (map.p99AbsoluteError*100).toFixed(1)+'%'}</strong>
         </div>)}
-        <small>Normal/tangent, renk sınırları ve kuyruk birleşimi gerçek model üzerinde
-          ayrıca görsel olarak onaylanmalıdır. UV adası sayısı tek başına başarı ölçütü değildir.</small>
+        <small>M2.5.1: aynı 3D yüzeyde PBR ortalama/P95/P99 ve UV gerilmesi
+          denetlenir. Normal/tangent, renk sınırları ve kuyruk birleşimi
+          yine görsel onay ister; numerik test tek başına oyun kabulü değildir.</small>
       </div>}
       {result.meshHealth&&<div className="uv-repair-health">
         <strong>Mesh sağlık kontrolü</strong>
@@ -218,6 +226,8 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
         onClick={()=>void copy(result.workingBlend)}><Clipboard size={14}/> Blender düzenleme dosyasını kopyala</button>
       <button type="button" className="btn btn-ghost btn-full"
         onClick={()=>void copy(result.uvLayout)}><Clipboard size={14}/> UV atlas SVG yolunu kopyala</button>
+      {result.uvStressLayout&&<button type="button" className="btn btn-ghost btn-full"
+        onClick={()=>void copy(result.uvStressLayout!)}><Clipboard size={14}/> UV gerilme haritası SVG yolunu kopyala</button>}
       <small>Elle UV düzenlemek için çalışma .blend dosyası da saklanır. Düzenlenmiş UV’yi yeniden bake etme, sonraki kabul adımıdır.</small>
     </div>}
   </section>;

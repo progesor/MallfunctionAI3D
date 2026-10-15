@@ -119,6 +119,42 @@ class UVFidelityRegression(unittest.TestCase):
             quality.surface_uv_pairs_reference(
                 fake(0.),fake(.01,True),"UVMap","AI3D_Clean")
 
+    def test_reported_fox_uv_distortion_fails_even_if_pbr_means_pass(self):
+        # Exact geometry/UV values from the user's 2026-10-15 screenshot
+        # reports. Four texture roles passed, yet tail texture is striped.
+        original={"trianglesSampled":7993,"p95Anisotropy":1.24353,
+                  "maximumAnisotropy":8.62372}
+        rebuilt={"trianglesSampled":7993,"p95Anisotropy":3.67474,
+                 "maximumAnisotropy":88.76794}
+        result=quality.evaluate_uv_stretch(original,rebuilt)
+        self.assertFalse(result["passed"])
+        self.assertGreater(result["p95Ratio"],2.95)
+        self.assertGreater(result["maximumRatio"],10.0)
+        self.assertLess(result["allowedP95Anisotropy"],2.25)
+
+    def test_large_local_pbr_failure_is_not_hidden_by_good_average(self):
+        # 98% samples are perfect; only two concentrated surface samples
+        # fail badly. Global mean and P95 alone would have accepted them.
+        good=[((.25,.25),(.25,.25)) for _ in range(98)]
+        bad=[((.25,.25),(.75,.75)) for _ in range(2)]
+        pixels=[0.1,0.1,0.1,1.,0.1,0.1,0.1,1.,
+                0.1,0.1,0.1,1.,0.9,0.9,0.9,1.]
+        result=quality.compare_surface_maps(
+            good+bad,pixels,(2,2),pixels,(2,2),"baseColor")
+        self.assertLess(result["meanAbsoluteError"],0.065)
+        self.assertLess(result["p95AbsoluteError"],0.18)
+        self.assertGreater(result["p99AbsoluteError"],0.25)
+        self.assertFalse(result["passed"])
+
+    def test_good_uv_stretch_accepted(self):
+        original={"trianglesSampled":102,"p95Anisotropy":1.25,
+                  "maximumAnisotropy":6.3}
+        rebuilt={"trianglesSampled":102,"p95Anisotropy":1.7,
+                 "maximumAnisotropy":9.2}
+        self.assertTrue(quality.evaluate_uv_stretch(original,rebuilt)["passed"])
+        with self.assertRaisesRegex(ValueError,"identical source geometry"):
+            quality.evaluate_uv_stretch(original,{**rebuilt,"trianglesSampled":103})
+
     def test_real_worker_has_unconditional_texture_gate(self):
         root=CORE.parents[1]
         worker=(root/"blender"/"repair_uv_pbr.py").read_text(encoding="utf-8")

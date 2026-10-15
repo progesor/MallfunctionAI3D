@@ -27,6 +27,7 @@ pub struct UvRepairResult {
     pub report_path: String,
     pub working_blend: String,
     pub uv_layout: String,
+    pub uv_stress_layout: String,
     pub strategy: String,
     pub old_islands: u64,
     pub new_islands: u64,
@@ -291,24 +292,26 @@ fn verify_texture_quality(report:&Value,folder:&Path) -> StudioResult<Value> {
     let path=folder.join("Texture_Quality.json");
     if !path.is_file() {
         return Err(format!(
-            "Bu UV sürümünün yüzey texture kalite raporu yok (eski, görseli \
-             doğrulanmamış bake). Kaynak dosyalar korunuyor. Yeni kalite \
-             kontrolü için taze UV onarım çalıştır. Eksik: {}",
-            path.display()
+            "Bu UV sürümünün kalite raporu yok. Kaynak model korunuyor. \
+             Yeni kalite kontrolü için taze UV onarımı başlat: {}",path.display()
         ));
     }
     let saved=read_json(&path)?;
     if report.get("textureFidelity")!=Some(&saved) {
         return Err(format!(
-            "Blender raporu ile bağımsız Texture_Quality.json uyuşmuyor: {}",
+            "Blender Repair_Report.json ve Texture_Quality.json uyuşmuyor: {}",
             path.display()
         ));
     }
-    if saved.get("schemaVersion").and_then(Value::as_u64)!=Some(1) ||
+    if saved.get("schemaVersion").and_then(Value::as_u64)!=Some(2) ||
        saved.get("evaluated").and_then(Value::as_bool)!=Some(true) ||
        saved.get("method").and_then(Value::as_str)!=Some(
            "same-3d-surface-barycentric-UV-reprojection") {
-        return Err(format!("Texture quality contract geçersiz: {}",path.display()));
+        return Err(format!(
+            "Eski texture kalite sözleşmesi M2.5.1 için yetersiz. \
+             UV gerilme / yerel renk hatası ölçümü olmayan eski sürüm \
+             otomatik onaylanamaz: {}",path.display()
+        ));
     }
     let provenance=saved.get("sourceUvProvenance")
         .ok_or("Texture QA kaynak yüz/UV eşleştirme kanıtı eksik")?;
@@ -319,47 +322,119 @@ fn verify_texture_quality(report:&Value,folder:&Path) -> StudioResult<Value> {
        provenance.get("originalUvProvenanceIntact").and_then(Value::as_bool)!=Some(true) ||
        provenance.get("originalCornerUvDriftCount").and_then(Value::as_u64)!=Some(0) {
         return Err(format!(
-            "Blender vertex weld kaynak UV yerleşimini değiştirmiş veya              yüz eşleştirme eksik: {}. Mesh weld'i kapatıp yeniden dene;              kaynak GLB değişmedi.",path.display()));
+            "Blender mesh/UV kaynak yüz eşleşmesi bozuk: {}. Weld'i kapatıp \
+             yeniden dene; orijinal GLB korunuyor.",path.display()
+        ));
     }
-    let specs:[(&str,f64,f64);4]=[
-        ("baseColor",0.065,0.180),("metallic",0.075,0.210),
-        ("roughness",0.075,0.210),("occlusion",0.080,0.220)
+    let metric=|object:&Value,name:&str| -> StudioResult<f64> {
+        let v=object.get(name).and_then(Value::as_f64)
+            .ok_or_else(||format!("Texture QA sayısal alanı eksik: {name}"))?;
+        if !v.is_finite() || v<0.0 {
+            return Err(format!("Texture QA alanı geçersiz: {name}"));
+        }
+        Ok(v)
+    };
+    // The first two metrics were already checked in M2.5. M2.5.1 also
+    // checks each role's P99 and the fraction of extreme local errors.
+    let specs:[(&str,f64,f64,f64,f64);4]=[
+        ("baseColor",0.065,0.180,0.250,0.010),
+        ("metallic",0.075,0.210,0.270,0.015),
+        ("roughness",0.075,0.210,0.270,0.015),
+        ("occlusion",0.080,0.220,0.280,0.015),
     ];
     let mut failures=Vec::new();
-    for (role, max_mean, max_p95) in specs {
-        let field=format!("/maps/{role}");
-        let item=saved.pointer(&field).ok_or_else(||format!(
-            "Texture QA haritası eksik: {role} {}",path.display()))?;
-        let mean=item.get("meanAbsoluteError").and_then(Value::as_f64)
-            .ok_or_else(||format!("Texture QA {role} mean yok"))?;
-        let p95=item.get("p95AbsoluteError").and_then(Value::as_f64)
-            .ok_or_else(||format!("Texture QA {role} P95 yok"))?;
-        let count=item.get("sampleCount").and_then(Value::as_u64)
-            .ok_or_else(||format!("Texture QA {role} sampleCount yok"))?;
-        if count<4 || !mean.is_finite() || !p95.is_finite() ||
-           mean<0.0 || p95<0.0 {
-            return Err(format!("Texture QA {role} örnek/hata değerleri geçersiz"));
+    let total=saved.get("sampleCount").and_then(Value::as_u64)
+        .ok_or("Texture QA toplam sampleCount eksik")?;
+    if total<4 || total!=faces*4 {
+        return Err("Texture QA toplam örnek sayısı/üçgen sayısı uyuşmuyor".into());
+    }
+    for (role,max_mean,max_p95,max_p99,max_severe) in specs {
+        let item=saved.pointer(&format!("/maps/{role}")).ok_or_else(
+            ||format!("Texture QA rolü eksik: {role}"))?;
+        let mean=metric(item,"meanAbsoluteError")?;
+        let p95=metric(item,"p95AbsoluteError")?;
+        let p99=metric(item,"p99AbsoluteError")?;
+        let severe=metric(item,"severeSampleFraction")?;
+        if item.get("sampleCount").and_then(Value::as_u64)!=Some(total) ||
+           mean>1.0 || p95>1.0 || p99>1.0 || severe>1.0 {
+            return Err(format!("Texture QA rolü ölçü aralığı/örnek sayısı geçersiz: {role}"));
         }
-        let measured_pass=mean<=max_mean && p95<=max_p95;
-        if item.get("passed").and_then(Value::as_bool)!=Some(measured_pass){
-            return Err(format!("Texture QA {role} başarı durumu hesapla uyuşmuyor"));
+        let ok=mean<=max_mean && p95<=max_p95 && p99<=max_p99 && severe<=max_severe;
+        if item.get("passed").and_then(Value::as_bool)!=Some(ok) {
+            return Err(format!("Texture QA {role} başarı durumu verilerle uyuşmuyor"));
         }
-        if !measured_pass {
-            failures.push(format!("{role}: mean={mean:.4}/{max_mean:.3}; \
-                                   p95={p95:.4}/{max_p95:.3}"));
+        if !ok {
+            failures.push(format!(
+                "{role}: mean={mean:.4}/{max_mean:.3}, P95={p95:.4}/{max_p95:.3}, \
+                 P99={p99:.4}/{max_p99:.3}, yüksek-hata=%{:.2}/{:.2}",
+                severe*100.0,max_severe*100.0
+            ));
         }
     }
-    let combined=failures.is_empty();
-    if saved.get("passed").and_then(Value::as_bool)!=Some(combined){
-        return Err(format!("Texture QA toplam sonucu harita sonuçlarıyla uyuşmuyor: {}",
-            path.display()));
+    let stretch=saved.get("uvStretch").ok_or("UV stretch kalite alanı eksik")?;
+    let source=stretch.get("source").ok_or("Kaynak UV stretch raporu eksik")?;
+    let rebuilt=stretch.get("rebuilt").ok_or("Yeni UV stretch raporu eksik")?;
+    if source.get("trianglesSampled").and_then(Value::as_u64)!=Some(faces) ||
+       rebuilt.get("trianglesSampled").and_then(Value::as_u64)!=Some(faces) {
+        return Err("UV stretch triangle counts do not match source face provenance".into());
     }
-    if !combined {
+    let source_p95=metric(source,"p95Anisotropy")?;
+    let source_max=metric(source,"maximumAnisotropy")?;
+    let rebuilt_p95=metric(rebuilt,"p95Anisotropy")?;
+    let rebuilt_max=metric(rebuilt,"maximumAnisotropy")?;
+    if source_p95<1.0 || source_max<1.0 || rebuilt_p95<1.0 || rebuilt_max<1.0 {
+        return Err("UV stretch anisotropy < 1 is invalid".into());
+    }
+    let p95_allowed=(source_p95*1.80).max(1.9);
+    let max_allowed=(source_max*3.0).max(24.0);
+    let degenerate_uv=rebuilt.get("degenerateUvTriangles")
+        .and_then(Value::as_u64)
+        .ok_or("Yeni UV atlasının sıfır UV-kenar üçgen sayısı eksik")?;
+    let stretch_ok=rebuilt_p95<=p95_allowed+0.00001 &&
+        rebuilt_max<=max_allowed+0.00001 && degenerate_uv==0;
+    let stretch_report=saved.get("uvStretchGate").ok_or(
+        "Blender UV distortion gate missing")?;
+    if stretch_report.get("passed").and_then(Value::as_bool)!=Some(stretch_ok) {
+        return Err("Blender UV distortion gate status doesn't match measured geometry".into());
+    }
+    let uv=report.get("uv").ok_or("UV unwrap report missing")?;
+    let old_islands=uv.get("oldUVIslands").and_then(Value::as_u64)
+        .ok_or("Old UV island count missing")?;
+    let new_islands=uv.get("newUVIslands").and_then(Value::as_u64)
+        .ok_or("New UV island count missing")?;
+    let simplified=old_islands>0 && new_islands>0 && new_islands<old_islands;
+    if saved.get("uvAtlasSimplified").and_then(Value::as_bool)!=Some(simplified) {
+        return Err("UV atlas simplification claim doesn't match island counts".into());
+    }
+    if !stretch_ok {
+        failures.push(format!(
+            "UV gerilmesi: P95 {rebuilt_p95:.3} (kaynak {source_p95:.3}, \
+             izin verilen {p95_allowed:.3}); en kötü {rebuilt_max:.3} \
+             (kaynak {source_max:.3}, izin verilen {max_allowed:.3}); \
+             sıfır UV kenarlı üçgen={degenerate_uv}. \
+             Kuyruk gibi yüzeylerde ciddi bantlaşma riski"
+        ));
+    }
+    if !simplified {
+        failures.push(format!(
+            "UV atlası daha kolay düzenlenebilir olmadı: \
+             eski {old_islands} ada → yeni {new_islands} ada"
+        ));
+    }
+    let accepted=failures.is_empty();
+    if saved.get("passed").and_then(Value::as_bool)!=Some(accepted) {
         return Err(format!(
-            "UV daha düzenli olsa da PBR texture transferi kaliteyi bozdu: {}. \
-             Onarım otomatik kabul edilmedi, orijinal varlık değişmedi. \
-             Beş bake dosyası, SVG ve Blender .blend korunuyor. Kalite raporu: {}",
-            failures.join(" | "),path.display()
+            "Blender kalite sonuçları ve Rust yeniden hesaplaması uyuşmuyor: {}",
+            path.display()
+        ));
+    }
+    if !accepted {
+        return Err(format!(
+            "UV/PBR kalite kapısı başarısız: {}. Model otomatik kabul edilmedi, \
+             kaynak GLB ve eski Unity prefablara dokunulmadı. \
+             Kaydedilmiş Texture_Quality.json: {}. UV_Stress.svg: {}",
+            failures.join(" | "),path.display(),
+            folder.join("UV_Stress.svg").display()
         ));
     }
     Ok(saved)
@@ -454,6 +529,7 @@ fn finalize_repair(
     let (rough,_)=read_baked_png(&folder,"roughness",resolution)?;
     let (ao,_)=read_baked_png(&folder,"occlusion",resolution)?;
     if !folder.join("UV_Layout.svg").is_file() ||
+       !folder.join("UV_Stress.svg").is_file() ||
        !folder.join("Repair_Working.blend").is_file() {
         return Err("Tamamlanmış Blender çalışma dosyası veya UV atlası eksik".into());
     }
@@ -520,7 +596,8 @@ fn finalize_repair(
         "blenderAcceptedTriangles":accepted_triangles,
         "sourceImportTriangleDelta":audit.declared-accepted_triangles,
         "surfaceTextureQuality":quality,
-        "qualityGate":"surface-fidelity-v1",
+        "qualityGate":"surface-fidelity-local-distortion-v2",
+        "uvStressLayout":"UV_Stress.svg",
         "geometryAcceptancePolicy":geometry_policy,
         "explicitOneFaceImportLossApproval":geometry_policy=="explicit-user-approved-one-import-face-loss",
         "uv":{"oldIslands":old_islands,"newIslands":new_islands},
@@ -633,6 +710,7 @@ fn register_repair(
         report_path:prepared.version.join("Repair_Report.json").to_string_lossy().into_owned(),
         working_blend:prepared.version.join("Repair_Working.blend").to_string_lossy().into_owned(),
         uv_layout:prepared.version.join("UV_Layout.svg").to_string_lossy().into_owned(),
+        uv_stress_layout:prepared.version.join("UV_Stress.svg").to_string_lossy().into_owned(),
         strategy:uv.get("strategy").and_then(Value::as_str).unwrap_or("unknown").into(),
         old_islands:uv.get("oldUVIslands").and_then(Value::as_u64).unwrap_or(0),
         new_islands:uv.get("newUVIslands").and_then(Value::as_u64).unwrap_or(0),
@@ -795,38 +873,60 @@ mod tests {
     #[test]fn rejects_unscored_or_low_fidelity_uv_repairs() {
         let root=std::env::temp_dir().join(format!("uv_qa_{}",Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        let legacy=json!({"textureFidelity":null});
-        assert!(verify_texture_quality(&legacy,&root).unwrap_err()
+        assert!(verify_texture_quality(&json!({}),&root).unwrap_err()
             .contains("kalite raporu yok"));
-        let quality=json!({
-            "schemaVersion":1,"evaluated":true,
+        let mut quality=json!({
+            "schemaVersion":2,"evaluated":true,
             "method":"same-3d-surface-barycentric-UV-reprojection",
-            "passed":false,
+            "passed":true,"sampleCount":320,"uvAtlasSimplified":true,
             "sourceUvProvenance":{"matchedTriangleCount":80,
                 "originalCornerUvDriftCount":0,
                 "originalUvProvenanceIntact":true},
+            "uvStretch":{"source":{"trianglesSampled":80,"p95Anisotropy":1.2,
+                          "maximumAnisotropy":7.0},
+                         "rebuilt":{"trianglesSampled":80,"p95Anisotropy":1.5,
+                          "maximumAnisotropy":9.0,"degenerateUvTriangles":0}},
+            "uvStretchGate":{"passed":true},
             "maps":{
-                "baseColor":{"meanAbsoluteError":0.210,"p95AbsoluteError":0.45,"sampleCount":80,"passed":false},
-                "metallic":{"meanAbsoluteError":0.01,"p95AbsoluteError":0.02,"sampleCount":80,"passed":true},
-                "roughness":{"meanAbsoluteError":0.01,"p95AbsoluteError":0.02,"sampleCount":80,"passed":true},
-                "occlusion":{"meanAbsoluteError":0.01,"p95AbsoluteError":0.02,"sampleCount":80,"passed":true},
+                "baseColor":{"meanAbsoluteError":0.025,"p95AbsoluteError":0.07,
+                    "p99AbsoluteError":0.1,"severeSampleFraction":0.001,
+                    "sampleCount":320,"passed":true},
+                "metallic":{"meanAbsoluteError":0.01,"p95AbsoluteError":0.02,
+                    "p99AbsoluteError":0.04,"severeSampleFraction":0.0,
+                    "sampleCount":320,"passed":true},
+                "roughness":{"meanAbsoluteError":0.01,"p95AbsoluteError":0.02,
+                    "p99AbsoluteError":0.04,"severeSampleFraction":0.0,
+                    "sampleCount":320,"passed":true},
+                "occlusion":{"meanAbsoluteError":0.01,"p95AbsoluteError":0.02,
+                    "p99AbsoluteError":0.04,"severeSampleFraction":0.0,
+                    "sampleCount":320,"passed":true}
             }
         });
+        let report=|q:&Value|json!({"textureFidelity":q,"trianglesBefore":80,
+            "uv":{"oldUVIslands":254,"newUVIslands":169}});
         fs::write(root.join("Texture_Quality.json"),
             serde_json::to_vec_pretty(&quality).unwrap()).unwrap();
-        let report=json!({"textureFidelity":quality,
-            "trianglesBefore":80});
-        assert!(verify_texture_quality(&report,&root).unwrap_err()
-            .contains("baseColor"));
-        let mut valid=quality.clone();
-        valid["maps"]["baseColor"]["meanAbsoluteError"]=json!(0.025);
-        valid["maps"]["baseColor"]["p95AbsoluteError"]=json!(0.070);
-        valid["maps"]["baseColor"]["passed"]=json!(true);
-        valid["passed"]=json!(true);
+        assert_eq!(verify_texture_quality(&report(&quality),&root)
+            .unwrap()["passed"],json!(true));
+        quality["maps"]["baseColor"]["p99AbsoluteError"]=json!(0.41);
+        quality["maps"]["baseColor"]["passed"]=json!(false);
+        quality["passed"]=json!(false);
         fs::write(root.join("Texture_Quality.json"),
-            serde_json::to_vec_pretty(&valid).unwrap()).unwrap();
-        assert_eq!(verify_texture_quality(
-            &json!({"textureFidelity":valid,"trianglesBefore":80}),&root).unwrap()["passed"],json!(true));
+            serde_json::to_vec_pretty(&quality).unwrap()).unwrap();
+        assert!(verify_texture_quality(&report(&quality),&root).unwrap_err()
+            .contains("baseColor"));
+        quality["maps"]["baseColor"]["p99AbsoluteError"]=json!(0.1);
+        quality["maps"]["baseColor"]["passed"]=json!(true);
+        quality["uvStretch"]["rebuilt"]["p95Anisotropy"]=json!(3.67474);
+        quality["uvStretch"]["rebuilt"]["maximumAnisotropy"]=json!(88.76794);
+        quality["uvStretchGate"]["passed"]=json!(false);
+        fs::write(root.join("Texture_Quality.json"),
+            serde_json::to_vec_pretty(&quality).unwrap()).unwrap();
+        assert!(verify_texture_quality(&report(&quality),&root).unwrap_err()
+            .contains("UV gerilmesi"));
+        quality["schemaVersion"]=json!(1);
+        assert!(verify_texture_quality(&report(&quality),&root).unwrap_err()
+            .contains("Eski texture kalite sözleşmesi"));
         fs::remove_dir_all(root).unwrap();
     }
     #[test]fn triangle_acceptance_distinguishes_pre_import_from_in_repair_loss() {
