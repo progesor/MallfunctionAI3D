@@ -27,6 +27,7 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
   const [recoverable,setRecoverable] = useState<RecoverableUvRepair[]>([]);
   const [chosenRecovery,setChosenRecovery] = useState('');
   const [approveOneImportFaceLoss,setApproveOneImportFaceLoss] = useState(false);
+  const [acceptFailedQuality,setAcceptFailedQuality] = useState(false);
 
   useEffect(()=>{
     let alive=true;
@@ -49,7 +50,8 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
     }
   }
   useEffect(()=>{
-    setRecoverable([]);setChosenRecovery('');setApproveOneImportFaceLoss(false);
+    setRecoverable([]);setChosenRecovery('');
+    setApproveOneImportFaceLoss(false);setAcceptFailedQuality(false);
     void refreshRecoverable();
     // Asset and export history changes should refresh recoverable runs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -71,16 +73,21 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
     finally{setBusy(false);void refreshRecoverable();}
   }
 
-  const matches = recoverable.filter(a=>a.profile===preset && a.resolution===resolution);
+  // Recovery is independent of NEW bake settings. The latest failed run
+  // may be 2048px while the default new-bake dropdown still reads 1024px.
+  // Always list all completed runs and pass their *recorded* profile/size.
+  const matches = recoverable;
   const recovery = matches.find(a=>a.versionDir===chosenRecovery) ?? matches[0];
   const importFaceDelta = recovery ? asset.triangleCount - recovery.inputTriangles : 0;
+  const isFailedRecovery = recovery?.qualityStatus === 'needs-review';
 
   async function resume() {
     if (!selected || !recovery || busy || !canRepair) return;
     setBusy(true);setError('');setResult(null);
     try {
       const repaired=await bridge.resumeUVRepair(
-        asset.id,recovery.versionDir,selected,preset,resolution,approveOneImportFaceLoss);
+        asset.id,recovery.versionDir,selected,
+        recovery.profile,recovery.resolution,approveOneImportFaceLoss);
       if (!repaired.sourceUntouched || repaired.newIslands<1 ||
           repaired.newIslands>repaired.oldIslands || repaired.asset.id===asset.id) {
         throw new Error('Kurtarılmış UV varlığı kabul kontrolünü geçmedi.');
@@ -92,6 +99,28 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
     } finally {
       setBusy(false);
       void refreshRecoverable();
+    }
+  }
+
+  async function saveReview() {
+    if (!selected || !recovery || !isFailedRecovery || !acceptFailedQuality ||
+        busy || !canRepair) return;
+    setBusy(true);setError('');setResult(null);
+    try {
+      const draft=await bridge.saveUVReview(
+        asset.id,recovery.versionDir,selected,
+        recovery.profile,recovery.resolution,
+        approveOneImportFaceLoss,true);
+      if (!draft.sourceUntouched || !draft.reviewOnly ||
+          draft.asset.id===asset.id) {
+        throw new Error('QA başarısız inceleme taslağı kabul kaydı doğrulanamadı.');
+      }
+      setResult(draft);
+      await onCreated();
+    } catch(err) {
+      setError('UV inceleme taslağı kurtarma: '+String(err));
+    } finally {
+      setBusy(false);void refreshRecoverable();
     }
   }
 
@@ -146,13 +175,21 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
       {busy?'Blender UV ve 5 PBR map hazırlıyor…':'Otomatik UV + PBR Onar'}
     </button>
     {matches.length>0&&<div className="uv-repair-recovery" data-testid="uv-repair-recovery">
-      <strong><Check size={14}/> Önceki Blender bake dosyaları bulundu</strong>
-      <p className="block-description">Mevcut 5 PBR PNG ve UV'yi tekrar üretmeden doğrulayarak yeni asset oluştur. Gerçek bir geometri kaybı varsa işlem yine durur.</p>
+      <strong><Layers3 size={14}/> Önceki Blender bake dosyaları bulundu</strong>
+      <p className="block-description">Kalite testinde reddedilen çalışmalar da burada gösterilir.
+        Beş PNG ve geometry.glb yeniden üretilmez. QA FAIL sürümleri
+        yalnızca inceleme taslağı olarak kaydedilebilir.</p>
       <label className="unity-export-select"><span>KURTARILACAK SÜRÜM</span><div>
         <select aria-label="Önceki UV onarım sürümü" value={recovery?.versionDir??''}
-          disabled={busy} onChange={e=>{setChosenRecovery(e.target.value);setApproveOneImportFaceLoss(false);}}>
+          disabled={busy} onChange={e=>{
+            setChosenRecovery(e.target.value);
+            setApproveOneImportFaceLoss(false);
+            setAcceptFailedQuality(false);
+          }}>
           {matches.map(a=><option key={a.versionDir} value={a.versionDir}>
-            {a.versionDir.split(/[\\/]/).pop()?.slice(0,8)} · UV {a.oldIslands} → {a.newIslands} · {a.inputTriangles} tris
+            {a.qualityStatus==='passed' ? 'QA OK' : 'QA FAIL'} ·
+            {a.versionDir.split(/[\\/]/).pop()?.slice(0,8)} · {a.resolution}px · {a.profile} ·
+            UV {a.oldIslands} → {a.newIslands} · {a.inputTriangles} tris
           </option>)}
         </select><ChevronDown size={13}/></div></label>
       {importFaceDelta===1&&<label className="uv-repair-toggle">
@@ -164,11 +201,31 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
           bu **yalnız bir üçgenlik içe aktarma farkını** açıkça kabul edebilirsin.
           Orijinal model değişmez; bu istisna yeni varlığın manifestine kaydedilir.</span>
       </label>}
-      <button type="button" data-testid="uv-resume-button" className="btn btn-outline btn-full"
+      {isFailedRecovery ? <div className="uv-repair-review" data-testid="uv-repair-review">
+        <p role="note" className="unity-export-error">
+          <strong>QA BAŞARISIZ — otomatik onarım olarak kabul edilmedi.</strong>
+          {recovery.qualityIssues.length>0
+            ? ' '+recovery.qualityIssues.join(' · ')
+            : ' Yüzey texture/UV testlerinden biri başarısız.'}
+          {' '}Bu sürüm yalnızca görünüm incelemesi içindir; Unity export engellenir.
+        </p>
+        <label className="uv-repair-toggle">
+          <input type="checkbox" aria-label="QA başarısız sürümü inceleme taslağı olarak kaydetmeyi onayla"
+            disabled={busy} checked={acceptFailedQuality}
+            onChange={e=>setAcceptFailedQuality(e.target.checked)}/>
+          <span>Kalite hatalarını gördüm. Sürümü <strong>QA FAIL / UV REVIEW</strong>
+            etiketiyle yalnız inceleme için kaydet (üretim onayı değil).</span>
+        </label>
+        <button type="button" className="btn btn-outline btn-full" data-testid="uv-save-review-button"
+          disabled={!enabled || !acceptFailedQuality} onClick={()=>void saveReview()}>
+          {busy?<LoaderCircle className="spin" size={15}/>:<Layers3 size={15}/>}
+          QA başarısız sürümü taslak olarak kurtar (Blender çalışmaz)
+        </button>
+      </div> : <button type="button" data-testid="uv-resume-button" className="btn btn-outline btn-full"
         disabled={!enabled} onClick={()=>void resume()}>
         {busy?<LoaderCircle className="spin" size={15}/>:<Layers3 size={15}/>}
         Önceki bake'i tamamla (Blender çalışmaz)
-      </button>
+      </button>}
     </div>}
     {!versions.length&&!loading&&<p className="mini-disclaimer">Önce yukarıdan 5 PBR haritasını dışa aktar; ardından onarım tek işlemde çalışır.</p>}
     {asset.materialCount!==1&&<p className="mini-disclaimer">v1 yalnız tek materyalli statik ürünlerde çalışır.</p>}
@@ -183,7 +240,14 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
         onClick={()=>void copy(error)}><Clipboard size={14}/> Hata metnini kopyala</button>
     </div>}
     {result&&<div className="uv-repair-result" role="status" data-testid="uv-repair-success">
-      <strong><Check size={14}/> Yeni temiz sürüm arşive eklendi</strong>
+      <strong>{result.reviewOnly
+        ? 'QA FAIL · UV REVIEW — inceleme taslağı arşive eklendi'
+        : <><Check size={14}/> Yeni temiz sürüm arşive eklendi</>}</strong>
+      {result.reviewOnly&&<p role="alert" className="unity-export-error">
+        Bu atlas PBR/UV kalite kapısını GEÇMEDİ. Blender bake dosyaları kurtarıldı;
+        orijinal GLB korundu. Bu taslağın Unity export'u engellendi.
+        Oyun için kaynak modeli veya kalite kabulünden geçen yeni bir sürümü kullan.
+      </p>
       <span>UV adası: {result.oldIslands} → {result.newIslands} · {result.strategy==='smart-project-fallback'?'Yedek UV yöntemi':'Açı + topoloji ile unwrap'}</span>
       {result.asset.triangleCount!==asset.triangleCount&&
         <p className="mini-disclaimer" role="note">
@@ -192,8 +256,10 @@ export function UVRepairPanel({asset,revision,canRepair,onCreated,onOpen}:Props)
           Unity aktarımından önce temiz modelin yüzeyini görsel olarak kontrol et.
           Kabul yöntemi Repair_Manifest.json dosyasına kaydedildi.
         </p>}
-      {result.quality?.passed&&<div className="uv-repair-quality" data-testid="uv-repair-quality">
-        <strong>3D yüzey texture sadakati: otomatik kontrolden geçti</strong>
+      {result.quality&&<div className="uv-repair-quality" data-testid="uv-repair-quality">
+        <strong>{result.quality.passed
+          ? '3D yüzey texture sadakati: otomatik kontrolden geçti'
+          : 'PBR / UV kalite denetimi başarısız — yalnızca inceleme'}</strong>
         {result.quality.uvStretchGate&&<p className="block-description">
           UV gerilme oranı: P95 ×{result.quality.uvStretchGate.p95Ratio.toFixed(2)},
           maksimum ×{result.quality.uvStretchGate.maximumRatio.toFixed(2)}

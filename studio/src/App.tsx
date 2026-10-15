@@ -80,6 +80,7 @@ function App() {
   const [job, setJob] = useState<JobStatus | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
+  const [reviewOnlyAsset, setReviewOnlyAsset] = useState(false);
   const [glb, setGlb] = useState<string | null>(null);
   const [previewLabel, setPreviewLabel] = useState('');
   const [viewLoading, setViewLoading] = useState(false);
@@ -173,10 +174,13 @@ function App() {
   async function showAsset(asset: Asset, lodIndex?: number) {
     setViewLoading(true);setError('');
     try {
-      const [data, report] = await Promise.all([
+      const [data, report, manifest] = await Promise.all([
         lodIndex === undefined ? bridge.assetBinary(asset.id) : bridge.lodBinary(asset.id, lodIndex),
         bridge.lodReport(asset.id),
+        bridge.assetManifest(asset.id).catch(()=>null),
       ]);
+      const provenance=(manifest?.provenance ?? null) as Record<string,unknown> | null;
+      setReviewOnlyAsset(provenance?.reviewOnly === true);
       setSelectedAsset(asset);setGlb(data);setLod(report);setPreviewLabel(`${asset.title}${lodIndex === undefined ? ' / Source' : ` / LOD${lodIndex}`}`);
       setActive('inspection');
     } catch (e) { setError(`GLB görüntülenemedi: ${String(e)}`); }
@@ -396,11 +400,16 @@ function App() {
           {selectedAsset ? <div className="inspector-block">
             <span className="section-label">SELECTED MODEL</span><h3>{selectedAsset.title}</h3>
             <div className="asset-meta"><span>{selectedAsset.engine}</span><span>{shortDate(selectedAsset.createdAt)}</span></div>
+            {reviewOnlyAsset&&<p role="alert" className="unity-export-error">
+              <strong>QA FAIL · UV REVIEW</strong> — Bu varlık yalnız görsel/UV inceleme
+              taslağıdır. Kalite kontrolünü geçmedi; Unity export engellendi.
+              Orijinal model arşivde korunuyor.
+            </p>
             <div className="stats-grid"><Metric label="TRIANGLES" value={selectedAsset.triangleCount.toLocaleString('en-US')}/><Metric label="VERTICES" value={selectedAsset.vertexCount.toLocaleString('en-US')}/><Metric label="MATERIALS" value={String(selectedAsset.materialCount)}/><Metric label="GLB SIZE" value={formatBytes(selectedAsset.fileSize)}/></div>
-            <TextureInspector glbBase64={glb} assetTitle={selectedAsset.title} assetId={selectedAsset.id} canExport={!/ \/ LOD\d+$/.test(previewLabel)} onExportComplete={() => setTextureExportRevision(x => x + 1)} />
+            <TextureInspector glbBase64={glb} assetTitle={selectedAsset.title} assetId={selectedAsset.id} canExport={!reviewOnlyAsset && !/ \/ LOD\d+$/.test(previewLabel)} onExportComplete={() => setTextureExportRevision(x => x + 1)} />
             <div className="separator"/>
             <UVRepairPanel asset={selectedAsset} revision={textureExportRevision}
-              canRepair={!/ \/ LOD\d+$/.test(previewLabel)}
+              canRepair={!reviewOnlyAsset && !/ \/ LOD\d+$/.test(previewLabel)}
               onCreated={async () => {await refresh();}}
               onOpen={showAsset}/>
             <div className="meta-row"><span>SHA256</span><code title={selectedAsset.sha256}>{selectedAsset.sha256.slice(0, 16)}…</code></div>
@@ -411,12 +420,16 @@ function App() {
             <p className="block-description">Tek modelden LOD0/1/2. Orijinal dosya asla değişmez.</p>
             {lod && <div className="lod-selector"><button onClick={() => void showAsset(selectedAsset)} type="button">SRC</button>{[0,1,2].map(index=><button key={index} type="button" onClick={() => void showAsset(selectedAsset,index)}>LOD{index}</button>)}</div>}
             {lod && <div className="lod-stats">{lod.report.lods.map((v,index)=><div key={index}><span>LOD{index}</span><strong>{v.triangles.toLocaleString('en-US')} tris</strong></div>)}</div>}
-            <button type="button" className="btn btn-outline btn-full" onClick={() => void generateLods()} disabled={lodLoading}>
+            <button type="button" className="btn btn-outline btn-full" onClick={() => void generateLods()} disabled={lodLoading || reviewOnlyAsset}>
               {lodLoading?<LoaderCircle className="spin" size={16}/>:<SquareStack size={16}/>} {lodLoading ? 'Blender işliyor…' : lod ? 'Yeni LOD versiyonu oluştur' : 'Blender ile LOD oluştur'}
             </button>
             <p className="mini-disclaimer">LOD geometrisi oluşturulur; yeniden normal/AO bake yapılmaz.</p>
             <div className="separator"/>
-            <UnityExportPanel asset={selectedAsset} lod={lod} refreshVersion={textureExportRevision} />
+            {reviewOnlyAsset ?
+              <p className="mini-disclaimer">QA FAIL inceleme varlıklarında Unity Native
+                ve URP/HDRP export kapalıdır. Bu sürümün kullanımı önizleme ile sınırlı.</p> :
+              <UnityExportPanel asset={selectedAsset} lod={lod}
+                refreshVersion={textureExportRevision} />}
           </div> : <div className="inspector-block"><div className="waiting-state"><Boxes size={30}/><strong>Bir model seç</strong><span>Geometri, PBR ve LOD ayrıntıları burada görünecek.</span></div></div>}
           </div>
           <div className="system-panel"><div className="card-heading"><div><Cpu size={17}/><strong>GPU Telemetry</strong></div><span className="live-status">● LIVE</span></div>

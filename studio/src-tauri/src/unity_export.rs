@@ -338,6 +338,7 @@ fn build_pack(asset_dir:&Path, asset_id:&str, asset_title:&str, original_sha:&st
 pub async fn export_unity_urp(asset_id:String, texture_export_dir:String,
     state:State<'_,StudioState>) -> StudioResult<GameExportResult> {
     let asset=state.asset_by_id(&asset_id)?;
+    crate::uv_repair::ensure_unity_exportable(Path::new(&asset.file_path))?;
     let owned=owned_asset_dir(&asset.file_path,&asset_id)?;
     verify_sha256(Path::new(&asset.file_path),&asset.sha256)?;
     tauri::async_runtime::spawn_blocking(move ||

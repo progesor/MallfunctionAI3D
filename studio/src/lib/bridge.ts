@@ -67,6 +67,8 @@ export interface RecoverableUvRepair {
   oldIslands: number;
   newIslands: number;
   inputTriangles: number;
+  qualityStatus: 'passed' | 'needs-review';
+  qualityIssues: string[];
 }
 export interface UvRepairResult {
   asset: Asset;
@@ -79,6 +81,7 @@ export interface UvRepairResult {
   oldIslands: number;
   newIslands: number;
   sourceUntouched: boolean;
+  reviewOnly: boolean;
   quality?: {
     passed: boolean;
     qualityStatus: string;
@@ -165,6 +168,14 @@ export const bridge = {
     invoke<UvRepairResult>('resume_uv_repair', {
       assetId, versionDir, textureExportDir, preset, resolution, approveOneImportFaceLoss,
     }),
+  saveUVReview: (
+    assetId: string, versionDir: string, textureExportDir: string,
+    preset: UvRepairPreset, resolution: number,
+    approveOneImportFaceLoss: boolean, acceptFailedQuality: boolean,
+  ) => invoke<UvRepairResult>('save_uv_review', {
+    assetId, versionDir, textureExportDir, preset, resolution,
+    approveOneImportFaceLoss, acceptFailedQuality,
+  }),
   blenderDetect: () => invoke<string | null>('blender_detect'),
   pickImage: () => open({ multiple: false, directory: false, filters: [{ name: 'Reference image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] }),
   pickGlb: () => open({ multiple: false, directory: false, filters: [{ name: 'glTF Binary', extensions: ['glb'] }] }),

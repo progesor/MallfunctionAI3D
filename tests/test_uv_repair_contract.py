@@ -73,7 +73,14 @@ class UVRepairContractTest(unittest.TestCase):
         self.assertIn('"qualityGate":"surface-fidelity-local-distortion-v2"', rust)
         self.assertIn('UV gerilmesi:', rust)
         self.assertIn('"uvAtlasSimplified"', rust)
-        self.assertIn("verify_texture_quality(&report,&folder)?", rust)
+        self.assertIn("fn verify_texture_quality(", rust)
+        self.assertIn("fn check_texture_quality(", rust)
+        self.assertIn("if !accepted && !allow_review_quality_failure", rust)
+        self.assertIn("pub async fn save_uv_review(", rust)
+        self.assertIn("fn ensure_unity_exportable(", rust)
+        self.assertIn("quality_status:if quality", rust)
+        self.assertIn("review_only:prepared.review_only", rust)
+        self.assertIn("verify_repair_report_mode(", rust)
         self.assertIn("safe_cleanup:bool", rust)
         self.assertIn("new UV island count is greater than source count", rust)
 
@@ -91,6 +98,26 @@ class MissingReportDiagnosticsRegression(unittest.TestCase):
         self.assertIn('def stage(label):', worker)
         self.assertIn('traceback.print_exc()', worker)
         self.assertIn('sys.exit(23)', worker)
+
+
+class RejectedQualityRecoveryContract(unittest.TestCase):
+    def test_failed_bake_visible_but_not_unity_exportable(self):
+        app = (ROOT / "studio/src/App.tsx").read_text(encoding="utf-8")
+        panel = (ROOT / "studio/src/components/UVRepairPanel.tsx").read_text(encoding="utf-8")
+        backend = RUST.read_text(encoding="utf-8")
+        native = (ROOT / "studio/src-tauri/src/unity_native.rs").read_text(encoding="utf-8")
+        legacy = (ROOT / "studio/src-tauri/src/unity_export.rs").read_text(encoding="utf-8")
+        self.assertIn("quality_status:if quality", backend)
+        self.assertIn("!review_only && matches!((old,new)", backend)
+        self.assertIn("accept_failed_quality:bool", backend)
+        self.assertIn("productionExportBlocked", backend)
+        self.assertIn("ensure_unity_exportable(", native)
+        self.assertIn("ensure_unity_exportable(", legacy)
+        self.assertIn("!reviewOnlyAsset", app)
+        self.assertIn("const matches = recoverable;", panel)
+        self.assertIn("recovery.profile,recovery.resolution", panel)
+        self.assertIn("QA başarısız sürümü taslak olarak kurtar", panel)
+        self.assertIn("acceptFailedQuality", panel)
 
 if __name__ == "__main__":
     unittest.main()

@@ -487,3 +487,9 @@ button { transition: background-color .14s ease, color .14s ease, border-color .
 .uv-repair-quality .meta-row strong {font-size:.7rem;text-align:right;}
 .uv-repair-health span {font-size:.72rem;line-height:1.45;}
 .uv-repair-quality small,.uv-repair-health small {opacity:.72;line-height:1.45;}
+
+/* M2.5.2: preserve QA-failed bakes as visibly review-only library assets.
+   Red error text is intentionally never styled like the success state. */
+.uv-repair-review {display:grid;gap:8px;padding:8px 0;min-width:0;}
+.uv-repair-review .unity-export-error {margin:0;white-space:normal;overflow-wrap:anywhere;}
+.uv-repair-review .uv-repair-toggle {line-height:1.5;}

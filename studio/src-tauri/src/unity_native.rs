@@ -397,6 +397,7 @@ pub async fn export_unity_native(
     state: State<'_,StudioState>,
 ) -> StudioResult<NativeExportResult> {
     let asset = state.asset_by_id(&asset_id)?;
+    crate::uv_repair::ensure_unity_exportable(Path::new(&asset.file_path))?;
     let archive = owned_asset_dir(&asset.file_path, &asset_id)?;
     verify_sha256(Path::new(&asset.file_path), &asset.sha256)?;
     let blender = find_blender(&state.current_settings()?)

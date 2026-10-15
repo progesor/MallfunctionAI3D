@@ -34,6 +34,7 @@ pub struct UvRepairResult {
     pub source_untouched: bool,
     pub quality: Value,
     pub mesh_health: Value,
+    pub review_only: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -45,12 +46,15 @@ pub struct RecoverableUvRepair {
     pub old_islands: u64,
     pub new_islands: u64,
     pub input_triangles: u64,
+    pub quality_status: String,
+    pub quality_issues: Vec<String>,
 }
 
 struct PreparedRepair {
     source: Vec<u8>,
     report: Value,
     version: PathBuf,
+    review_only: bool,
 }
 
 fn read_baked_png(version:&Path, role:&str, resolution:u32) -> StudioResult<(RgbaImage,Vec<u8>)> {
@@ -231,9 +235,9 @@ fn read_blender_result(version:&Path, exit_success:bool, exit_code:Option<i32>, 
 /// indices within a primitive). An otherwise unexplained single missing face
 /// may be accepted ONLY by an explicit opt-in on a completed old bake; it
 /// remains flagged as an import-time loss in the immutable manifest.
-fn verify_repair_report(
+fn verify_repair_report_mode(
     report:&Value, audit:&SourceTriangles, version:&Path,
-    approve_one_import_face_loss:bool,
+    approve_one_import_face_loss:bool, review_only:bool,
 ) -> StudioResult<(u64,u64,u64,&'static str)> {
     let untouched=report.get("sourceUntouched").and_then(Value::as_bool);
     let before=report.get("trianglesBefore").and_then(Value::as_u64);
@@ -264,7 +268,7 @@ fn verify_repair_report(
     if new.is_none() {failures.push("uv.newUVIslands missing or not an integer");}
     if old==Some(0) {failures.push("source has zero UV islands");}
     if new==Some(0) {failures.push("repaired atlas has zero UV islands");}
-    if matches!((old,new),(Some(a),Some(b)) if b>a) {
+    if !review_only && matches!((old,new),(Some(a),Some(b)) if b>a) {
         failures.push("new UV island count is greater than source count");
     }
     if !failures.is_empty() {
@@ -285,10 +289,21 @@ fn verify_repair_report(
 }
 
 
+fn verify_repair_report(
+    report:&Value, audit:&SourceTriangles, version:&Path,
+    approve_one_import_face_loss:bool,
+) -> StudioResult<(u64,u64,u64,&'static str)> {
+    verify_repair_report_mode(
+        report,audit,version,approve_one_import_face_loss,false
+    )
+}
+
 /// Fail closed if a good UV island count hides poor physical texture transfer.
 /// The Blender-independent fidelity module compares source and baked textures
 /// at matching surface barycentric sample positions, not atlas background.
-fn verify_texture_quality(report:&Value,folder:&Path) -> StudioResult<Value> {
+fn check_texture_quality(
+    report:&Value,folder:&Path,allow_review_quality_failure:bool
+) -> StudioResult<Value> {
     let path=folder.join("Texture_Quality.json");
     if !path.is_file() {
         return Err(format!(
@@ -428,7 +443,7 @@ fn verify_texture_quality(report:&Value,folder:&Path) -> StudioResult<Value> {
             path.display()
         ));
     }
-    if !accepted {
+    if !accepted && !allow_review_quality_failure {
         return Err(format!(
             "UV/PBR kalite kapısı başarısız: {}. Model otomatik kabul edilmedi, \
              kaynak GLB ve eski Unity prefablara dokunulmadı. \
@@ -440,12 +455,37 @@ fn verify_texture_quality(report:&Value,folder:&Path) -> StudioResult<Value> {
     Ok(saved)
 }
 
+/// Legacy strict entrypoint stays strict; a separate, explicitly requested
+/// review-only path may inspect failed output without claiming acceptance.
+fn verify_texture_quality(report:&Value,folder:&Path) -> StudioResult<Value> {
+    check_texture_quality(report,folder,false)
+}
+
+fn quality_issues(quality:&Value) -> Vec<String> {
+    let mut problems=Vec::new();
+    for role in ROLES {
+        if quality.pointer(&format!("/maps/{role}/passed"))
+            .and_then(Value::as_bool)==Some(false) {
+            problems.push(format!("{role} PBR kalite kaybı"));
+        }
+    }
+    if quality.pointer("/uvStretchGate/passed").and_then(Value::as_bool)==Some(false) {
+        problems.push("UV gerilmesi yüksek".into());
+    }
+    if quality.get("uvAtlasSimplified").and_then(Value::as_bool)==Some(false) {
+        problems.push("UV ada sayısı azaltılamadı".into());
+    }
+    problems
+}
+
+
 /// Finalize Blender's completed outputs, preserving the original five bakes.
 /// This is also called when resuming a previously rejected completed attempt.
 fn finalize_repair(
     asset_dir:&Path, file_path:&Path, source_sha:&str,
     texture_version:&str, version:&Path, preset:&str, resolution:u32,
     approve_one_import_face_loss:bool,
+    review_only:bool,
 ) -> StudioResult<PreparedRepair> {
     let base=asset_dir.join("uv_repairs").canonicalize()
         .map_err(|e|format!("UV onarım arşivi bulunamadı: {e}"))?;
@@ -515,14 +555,20 @@ fn finalize_repair(
     }
     // Evaluate texture quality FIRST so a bad tail/color never hides behind
     // the separately documented one-face import-time geometry mismatch.
-    let quality=verify_texture_quality(&report,&folder)?;
+    let quality=if review_only {
+        check_texture_quality(&report,&folder,true)?
+    } else {
+        verify_texture_quality(&report,&folder)?
+    };
     let audit=audit_source_triangles(&original)?;
     let declared=inspect_glb(&original)?.0;
     if audit.declared!=declared{
         return Err(format!("GLB triangle audit mismatch: {} vs {declared}",audit.declared));
     }
     let (old_islands,new_islands,accepted_triangles,geometry_policy)=
-        verify_repair_report(&report,&audit,&folder,approve_one_import_face_loss)?;
+        verify_repair_report_mode(
+            &report,&audit,&folder,approve_one_import_face_loss,review_only
+        )?;
     let (_,base_color)=read_baked_png(&folder,"baseColor",resolution)?;
     let (_,normal)=read_baked_png(&folder,"normal",resolution)?;
     let (metal,_)=read_baked_png(&folder,"metallic",resolution)?;
@@ -597,6 +643,13 @@ fn finalize_repair(
         "sourceImportTriangleDelta":audit.declared-accepted_triangles,
         "surfaceTextureQuality":quality,
         "qualityGate":"surface-fidelity-local-distortion-v2",
+        "reviewOnly":review_only,
+        "qualityGatePassed":quality.get("passed").and_then(Value::as_bool)==Some(true),
+        "qualityIssues":quality_issues(&quality),
+        "qualityAcceptancePolicy":if review_only {
+            "explicit-review-only-exception"
+        } else {"strict"},
+
         "uvStressLayout":"UV_Stress.svg",
         "geometryAcceptancePolicy":geometry_policy,
         "explicitOneFaceImportLossApproval":geometry_policy=="explicit-user-approved-one-import-face-loss",
@@ -612,7 +665,7 @@ fn finalize_repair(
             .map_err(|e|format!("Repair_Manifest.json üzerine yazılmadı: {e}"))?
             .write_all(&manifest_data).map_err(|e|e.to_string())?;
     }
-    Ok(PreparedRepair{source:output,report,version:folder})
+    Ok(PreparedRepair{source:output,report,version:folder,review_only})
 }
 
 fn background_repair(
@@ -684,15 +737,18 @@ fn background_repair(
     // The worker has finished; exact validations and packing are also reused
     // by the no-bake recovery path.
     finalize_repair(&asset_dir,&file_path,&source_sha,&texture_version,
-                    &version,&preset,resolution,false)
+                    &version,&preset,resolution,false,false)
 }
 
 fn register_repair(
     state:&StudioState, asset:&Asset, prepared:PreparedRepair
 ) -> StudioResult<UvRepairResult> {
     let report=&prepared.report;
+    let title=if prepared.review_only {
+        format!("{} · UV REVIEW (QA FAIL)",asset.title)
+    } else {format!("{} · UV Clean",asset.title)};
     let new_asset=state.store_asset(
-        &prepared.source,&format!("{} · UV Clean",asset.title),&asset.engine,
+        &prepared.source,&title,&asset.engine,
         json!({
             "origin":"uv-repair",
             "parentAssetId":&asset.id,
@@ -700,7 +756,12 @@ fn register_repair(
             "repairVersion":&prepared.version,
             "repairReport":report,
             "manualUvBlend":"Repair_Working.blend",
-            "originalImmutable":true
+            "originalImmutable":true,
+            "reviewOnly":prepared.review_only,
+            "productionExportBlocked":prepared.review_only,
+            "qualityGatePassed":report.pointer("/textureFidelity/passed")
+                .and_then(Value::as_bool)==Some(true),
+            "qualityIssues":quality_issues(&report["textureFidelity"])
         }),
     )?;
     let uv=report.get("uv").ok_or("UV report missing")?;
@@ -717,6 +778,7 @@ fn register_repair(
         source_untouched:true,
         quality:report.get("textureFidelity").cloned().unwrap_or(Value::Null),
         mesh_health:report.get("meshHealth").cloned().unwrap_or(Value::Null),
+        review_only:prepared.review_only,
     })
 }
 
@@ -753,9 +815,11 @@ pub fn list_uv_repair_attempts(
         let quality=match read_json(&version.join("Texture_Quality.json")) {
             Ok(v)=>v,Err(_)=>continue,
         };
-        if quality.get("passed").and_then(Value::as_bool)!=Some(true) ||
+        if quality.get("schemaVersion").and_then(Value::as_u64)!=Some(2) ||
+           quality.get("evaluated").and_then(Value::as_bool)!=Some(true) ||
+           quality.get("passed").and_then(Value::as_bool).is_none() ||
            report.get("textureFidelity")!=Some(&quality) {
-            continue; // Failed/legacy bakes are not listed as recoverable.
+            continue; // Invalid or unscored runs are not reviewable.
         }
         if report.get("schemaVersion").and_then(Value::as_u64)!=Some(1) ||
             report.get("sourceUntouched").and_then(Value::as_bool)!=Some(true){
@@ -773,7 +837,7 @@ pub fn list_uv_repair_attempts(
             .unwrap_or(0);
         let triangles=report.get("trianglesAfter").and_then(Value::as_u64)
             .unwrap_or(0);
-        if old_islands==0 || new_islands==0 || new_islands>old_islands || triangles==0 {
+        if old_islands==0 || new_islands==0 || triangles==0 {
             continue;
         }
         // Limit reading log size; this endpoint must remain cheap for UI.
@@ -789,6 +853,10 @@ pub fn list_uv_repair_attempts(
         found.push((when,RecoverableUvRepair{
             version_dir:version.to_string_lossy().into_owned(),
             profile,resolution,old_islands,new_islands,input_triangles:triangles,
+            quality_status:if quality["passed"]==Value::Bool(true) {
+                "passed".to_owned()
+            } else {"needs-review".to_owned()},
+            quality_issues:quality_issues(&quality),
         }));
     }
     found.sort_by(|a,b|b.0.cmp(&a.0));
@@ -818,8 +886,40 @@ pub async fn resume_uv_repair(
     let source_sha=asset.sha256.clone();
     let prepared=tauri::async_runtime::spawn_blocking(move ||
         finalize_repair(&dir,&original,&source_sha,&texture_export_dir,
-                        Path::new(&version_dir),&preset,resolution,approve_one_import_face_loss)
+                        Path::new(&version_dir),&preset,resolution,
+                        approve_one_import_face_loss,false)
     ).await.map_err(|e|format!("UV kurtarma görevi başarısız: {e}"))??;
+    register_repair(&state,&asset,prepared)
+}
+
+/// Explicit user choice to keep a failed but fully baked UV asset for
+/// INSPECTION. The result is permanently flagged reviewOnly/QA FAIL,
+/// blocked from Unity exports and never labelled game-ready.
+#[tauri::command]
+pub async fn save_uv_review(
+    asset_id:String,version_dir:String,texture_export_dir:String,
+    preset:String,resolution:u32,approve_one_import_face_loss:bool,
+    accept_failed_quality:bool,state:State<'_,StudioState>,
+) -> StudioResult<UvRepairResult> {
+    if !accept_failed_quality {
+        return Err("QA başarısız sürüm yalnız açık kullanıcı onayıyla inceleme taslağı olarak kaydedilebilir".into());
+    }
+    if !matches!(preset.as_str(),"preserve"|"plush") ||
+       !matches!(resolution,512|1024|2048) {
+        return Err("İnceleme taslağı PBR profili / çözünürlüğü geçersiz".into());
+    }
+    let asset=state.asset_by_id(&asset_id)?;
+    if asset.material_count!=1 {
+        return Err("İnceleme taslağı yalnız tek materyalli modeller içindir".into());
+    }
+    let dir=owned_asset_dir(&asset.file_path,&asset_id)?;
+    let src=PathBuf::from(&asset.file_path);
+    let sha=asset.sha256.clone();
+    let prepared=tauri::async_runtime::spawn_blocking(move ||
+        finalize_repair(&dir,&src,&sha,&texture_export_dir,
+                        Path::new(&version_dir),&preset,resolution,
+                        approve_one_import_face_loss,true)
+    ).await.map_err(|e|format!("UV inceleme taslağı kurtarma görevi: {e}"))??;
     register_repair(&state,&asset,prepared)
 }
 
@@ -848,6 +948,21 @@ pub async fn repair_asset_uv(
                           preset.clone(),weld,safe_cleanup)
     ).await.map_err(|e|format!("UV Repair worker hatası: {e}"))??;
     register_repair(&state,&asset,prepared)
+}
+
+/// All game export entrypoints must reject manually saved, QA-rejected
+/// review-only assets. Normal (original or quality-passed) assets are unchanged.
+pub(crate) fn ensure_unity_exportable(asset_path:&Path)->StudioResult<()> {
+    let owner=asset_path.parent().ok_or("UV varlık arşiv yolu geçersiz")?;
+    let manifest=crate::unity_export::read_json(&owner.join("manifest.json"))?;
+    if manifest.pointer("/provenance/reviewOnly").and_then(Value::as_bool)==Some(true)
+      || manifest.pointer("/provenance/productionExportBlocked")
+          .and_then(Value::as_bool)==Some(true) {
+        return Err("Bu model QA FAIL · UV REVIEW inceleme taslağıdır. \
+            Unity için kaynak veya kalite testinden geçmiş modeli seç. \
+            Orijinal GLB korunmaktadır.".into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -924,10 +1039,54 @@ mod tests {
             serde_json::to_vec_pretty(&quality).unwrap()).unwrap();
         assert!(verify_texture_quality(&report(&quality),&root).unwrap_err()
             .contains("UV gerilmesi"));
+        // Explicit inspection-only recovery may preserve QA-failed geometry
+        // but cannot mutate the measured quality or claim it passed.
+        assert_eq!(
+            check_texture_quality(&report(&quality),&root,true)
+                .unwrap()["passed"],json!(false)
+        );
+        let mut fake_good=quality.clone();
+        fake_good["passed"]=json!(true);
+        assert!(check_texture_quality(&report(&fake_good),&root,true).is_err());
         quality["schemaVersion"]=json!(1);
         assert!(verify_texture_quality(&report(&quality),&root).unwrap_err()
             .contains("Eski texture kalite sözleşmesi"));
         fs::remove_dir_all(root).unwrap();
+    }
+    #[test]fn failed_atlas_is_reviewable_without_relaxing_real_geometry_safety() {
+        let audited=SourceTriangles{declared:7994,zero_area:0,
+            duplicate_faces:0,effective:7994};
+        let report=json!({"sourceUntouched":true,"trianglesBefore":7993,
+            "trianglesAfter":7993,"uv":{"oldUVIslands":254,"newUVIslands":269}});
+        let path=Path::new("asset/uv_repairs/rejected");
+        assert!(verify_repair_report(&report,&audited,path,true).is_err());
+        let permitted=verify_repair_report_mode(&report,&audited,path,true,true).unwrap();
+        assert_eq!(permitted.0,254);
+        assert_eq!(permitted.1,269);
+        assert_eq!(permitted.2,7993);
+        assert_eq!(permitted.3,"explicit-user-approved-one-import-face-loss");
+
+        let later_loss=json!({"sourceUntouched":true,"trianglesBefore":7994,
+            "trianglesAfter":7993,"uv":{"oldUVIslands":254,"newUVIslands":269}});
+        assert!(verify_repair_report_mode(&later_loss,&audited,path,true,true)
+            .unwrap_err().contains("actually changed triangle count DURING UV repair"));
+    }
+    #[test]fn review_only_asset_cannot_be_exported_as_game_ready() {
+        let folder=std::env::temp_dir().join(format!("uv_review_block_{}",Uuid::new_v4()));
+        fs::create_dir_all(&folder).unwrap();
+        let asset_path=folder.join("original.glb");
+        fs::write(&asset_path,b"only manifest evaluated").unwrap();
+        let manifest=folder.join("manifest.json");
+        fs::write(&manifest,serde_json::to_vec(&json!({"provenance":{
+            "reviewOnly":true,"qualityGatePassed":false
+        }})).unwrap()).unwrap();
+        assert!(ensure_unity_exportable(&asset_path).unwrap_err()
+            .contains("QA FAIL"));
+        fs::write(&manifest,serde_json::to_vec(&json!({"provenance":{
+            "reviewOnly":false,"qualityGatePassed":true
+        }})).unwrap()).unwrap();
+        assert!(ensure_unity_exportable(&asset_path).is_ok());
+        fs::remove_dir_all(folder).unwrap();
     }
     #[test]fn triangle_acceptance_distinguishes_pre_import_from_in_repair_loss() {
         let path=Path::new("example/uv_repairs/uuid");
