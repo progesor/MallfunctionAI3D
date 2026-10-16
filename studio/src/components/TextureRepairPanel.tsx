@@ -34,11 +34,13 @@ export function TextureRepairPanel({asset,revision,canRepair,onCreated,onOpen}:P
   const [approval,setApproval]=useState(false);
   const [approved,setApproved]=useState<Asset|null>(null);
   const [parent,setParent]=useState<Asset|null>(null);
+  const [reviewImpact,setReviewImpact]=useState<SurfaceInspection|null>(null);
 
   useEffect(()=>{
     let alive=true;
     setVersions([]);setSelected('');setError('');setAnalysis(null);
     setResult(null);setReview(false);setApproval(false);setApproved(null);setParent(null);
+    setReviewImpact(null);
     void Promise.all([
       bridge.textureExports(asset.id).catch(()=>[]),
       bridge.assetManifest(asset.id).catch(()=>null),
@@ -49,6 +51,11 @@ export function TextureRepairPanel({asset,revision,canRepair,onCreated,onOpen}:P
       if(provenance?.origin==='texture-seam-repair'&&
          provenance?.reviewOnly===true) {
         setReview(true);
+        const impact=provenance.inspection as SurfaceInspection|undefined;
+        if(impact && Array.isArray(impact.maps) &&
+           typeof impact.editablePixels==='number') {
+          setReviewImpact(impact);
+        }
         const list=await bridge.assets().catch(()=>[]);
         if(alive)setParent(list.find(a=>a.id===provenance.parentAssetId)??null);
       }
@@ -120,6 +127,22 @@ export function TextureRepairPanel({asset,revision,canRepair,onCreated,onOpen}:P
           <strong>TEXTURE REVIEW — Unity export engellendi.</strong>
           Yeni model ve orijinal doku/normal görünümünü karşılaştırmalısın.
         </p>
+        <p className="mini-disclaimer" data-testid="texture-review-limitation">
+          Bu sürüm yalnızca UV dikişlerinin yakınındaki dar pikselleri değiştirir.
+          Geniş yüzey bantlaşmasını, lekeleri veya yapay renk geçişlerini onarmaz.
+          Görünür sorunlar devam ediyorsa bu modeli onaylama.
+        </p>
+        {reviewImpact&&<div className="texture-surface-diagnostics"
+          data-testid="texture-review-impact">
+          <strong>Uygulanan dikiş düzeltmesinin kapsamı</strong>
+          <p>{reviewImpact.editablePixels.toLocaleString('tr-TR')} toplam harita pikseli
+            (farklı haritalar birlikte sayılır). Bu sayı görsel kalite puanı değildir.</p>
+          {reviewImpact.maps.map(map=><p key={map.role}>
+            {map.role}: {map.changedPixels.toLocaleString('tr-TR')} px ·
+            %{(map.changedFraction*100).toFixed(3)} ·
+            ortalama fark {map.meanPixelDelta.toFixed(4)}
+          </p>)}
+        </div>}
         {parent&&<button type="button" className="btn btn-ghost btn-full"
           onClick={()=>void onOpen(parent)}><Eye size={14}/> Orijinal modeli aç</button>}
         <label className="uv-repair-toggle">
@@ -204,7 +227,12 @@ export function TextureRepairPanel({asset,revision,canRepair,onCreated,onOpen}:P
         {result&&<div className="texture-surface-result" data-testid="texture-seam-result">
           <strong><Check size={14}/> İnceleme taslağı hazır</strong>
           <p>UV/vertex/normal verileri korunmuş ayrı bir GLB oluşturuldu.
-            Unity export, görsel onay verilene kadar kapalı.</p>
+            Unity export, görsel onay verilene kadar kapalı. Bu yalnızca
+            dar UV dikişlerine müdahale eder; genel doku bantlaşması sürebilir.</p>
+          <p data-testid="texture-seam-scope">
+            {result.inspection.editablePixels.toLocaleString('tr-TR')} toplam harita pikseli
+            değiştirildi. Bu sayı görsel kaliteyi kanıtlamaz.
+          </p>
           <button type="button" className="btn btn-outline btn-full"
             onClick={()=>void onOpen(result.asset)}>
             <Eye size={14}/> Düzeltilen modeli 3D görüntüle
