@@ -35,6 +35,9 @@ fn worker_has_proxy()->bool {
         && WORKER_SOURCE.contains("transfer_clean_uv_from_proxy(")
         && !WORKER_SOURCE.contains("rebuild_exact_topology_work_copy(")
 }
+// Installation version is enforced by the embedded worker; this label
+// is used only by the unit contract so normal desktop builds stay warning-free.
+#[cfg(test)]
 const PINNED_XATLAS:&str="xatlas==0.0.11";
 const INSTALLER_SCRIPT:&str=include_str!("../../../blender/install_xatlas_wheel.py");
 const XATLAS_PROBE:&str=
@@ -189,6 +192,7 @@ mod tests {
     }
     #[test]fn xatlas_install_is_pinned_and_never_mutates_blender_site_packages(){
         assert_eq!(PINNED_XATLAS,"xatlas==0.0.11");
+        assert!(INSTALLER_SCRIPT.contains("VERSION = \"0.0.11\""));
         assert!(XATLAS_PROBE.contains("import xatlas,numpy"));
     }
 }
