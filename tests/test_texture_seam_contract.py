@@ -34,6 +34,16 @@ class TextureSurfaceContract(unittest.TestCase):
         self.assertNotIn("bmesh.ops.remove_doubles(",geo)
         self.assertNotIn("texture_seam_pixels::blend_seams",self.read("uv_repair.rs"))
 
+    def test_seam_repair_never_paints_outside_owning_uv_face(self):
+        pix=self.read("texture_seam_pixels.rs")
+        # Triangle center containment, not merely an inward direction
+        # followed by rounded texture pixel coordinates.
+        self.assertIn("fn pixel_inside_face(",pix)
+        self.assertIn("if !pixel_inside_face(side,x,y,w,h)",pix)
+        self.assertIn("if !pixel_inside_face(&pair.left,ax,ay,w,h)",pix)
+        self.assertIn("!pixel_inside_face(&pair.right,bx,by,w,h)",pix)
+        self.assertIn("thin_uv_charts_never_overpaint_neighbor_pixels",pix)
+
     def test_pbr_composition_is_not_reimplemented_differently(self):
         rust=self.read("texture_surface.rs")
         self.assertIn("make_orm(",rust)
