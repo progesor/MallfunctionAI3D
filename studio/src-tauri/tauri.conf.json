@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Mallfunction AI3D Studio",
+  "version": "0.2.2",
+  "identifier": "net.mallfunction.ai3dstudio",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Mallfunction AI3D Studio",
+        "width": 1480,
+        "height": 920,
+        "minWidth": 1090,
+        "minHeight": 710,
+        "backgroundColor": "#0c151e"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' customprotocol: asset: http://asset.localhost; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420; script-src 'self' 'unsafe-eval'"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "icons/32x32.png",
+      "icons/icon.ico"
+    ]
+  }
+}

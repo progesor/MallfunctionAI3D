@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Local desktop-only commands and explicit user-selected image/GLB file picker",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:allow-open"]
+}

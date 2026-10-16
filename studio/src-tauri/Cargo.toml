@@ -1,0 +1,28 @@
+[package]
+name = "mallfunction-ai3d-studio"
+version = "0.2.2"
+description = "Local AI 3D production studio — ComfyUI / Blender / asset library"
+edition = "2021"
+
+[lib]
+name = "mallfunction_ai3d_studio_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json", "multipart"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+tokio = { version = "1", features = ["time", "process"] }
+chrono = { version = "0.4", features = ["serde", "clock"] }
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+base64 = "0.22"
+url = "2"
+
+image = { version = "0.25", default-features = false, features = ["png"] }

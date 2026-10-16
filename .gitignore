@@ -5,6 +5,7 @@ upstream/*
 !upstream/official_pixal3d_trellis2.json
 workflows/*
 !workflows/.gitkeep
+!workflows/PLAYBOX_FoxPlush_pixal3d_api_v01.json
 !workflows/Mallfunction_PLAYBOX_FoxPlush_*_pilot_v01.json
 !workflows/Mallfunction_PLAYBOX_FoxPlush_*_pilot_v01.audit.json
 references/*.png
@@ -13,3 +14,16 @@ references/*.jpeg
 references/*.webp
 __pycache__/
 *.pyc
+
+# Desktop Studio (local builds and asset data)
+studio/node_modules/
+studio/dist/
+studio/src-tauri/target/
+studio/src-tauri/gen/
+studio/.env
+studio/.env.local
+studio/*.log
+studio/**/*.sqlite3
+studio/**/*.sqlite3-*
+studio/playwright-report/
+studio/test-results/

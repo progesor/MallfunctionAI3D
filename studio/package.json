@@ -1,0 +1,37 @@
+{
+  "name": "mallfunction-ai3d-studio",
+  "version": "0.2.2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/check-rust-literals.mjs && node scripts/check-jsx-syntax.mjs && vite --host 127.0.0.1",
+    "check:syntax": "node scripts/check-rust-literals.mjs && node scripts/check-jsx-syntax.mjs",
+    "check:rust-literals": "node scripts/check-rust-literals.mjs --self-test",
+    "build": "tsc --noEmit && vite build",
+    "test:adapter": "node --experimental-strip-types src/tests/workflow.test.mjs && node --experimental-strip-types src/tests/pilot.test.mjs && node --experimental-strip-types src/tests/api-workflow.test.mjs && node --experimental-strip-types --test src/tests/glb-inspector.test.mjs && node --experimental-strip-types --test src/tests/texture-export.test.mjs && node --experimental-strip-types --test src/tests/png-encode.test.mjs",
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "test:ui": "playwright test"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.6.0",
+    "@react-three/fiber": "^9.3.0",
+    "@tauri-apps/api": "^2.7.0",
+    "@tauri-apps/plugin-dialog": "^2.4.0",
+    "lucide-react": "^0.468.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.7.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@types/three": "^0.180.0",
+    "@vitejs/plugin-react": "^4.5.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.0",
+    "@playwright/test": "^1.56.1"
+  }
+}
