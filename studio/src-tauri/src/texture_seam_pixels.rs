@@ -49,6 +49,25 @@ fn pixel_at(p:[f64;2],w:u32,h:u32)->Option<(u32,u32,usize)>{
     if x<0 || y<0 || x>=w as i64 || y>=h as i64 {return None}
     Some((x as u32,y as u32,y as usize*w as usize+x as usize))
 }
+// Rasterization can round an inward sample into a neighboring UV chart.
+// Only pixels whose CENTERS belong to this face may contribute to a repair.
+// Degenerate UV triangles have no safe paint region.
+fn orient2d(a:[f64;2],b:[f64;2],c:[f64;2])->f64{
+    (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0])
+}
+fn pixel_inside_face(side:&SeamSide,x:u32,y:u32,w:u32,h:u32)->bool{
+    let a=uv_pixel(side.start,w,h);
+    let b=uv_pixel(side.end,w,h);
+    let c=uv_pixel(side.inside,w,h);
+    let area=orient2d(a,b,c);
+    if !area.is_finite() || area.abs()<1e-8 {return false;}
+    let p=[x as f64,y as f64];
+    let ab=orient2d(a,b,p)/area;
+    let bc=orient2d(b,c,p)/area;
+    let ca=orient2d(c,a,p)/area;
+    const EPS:f64=1e-6;
+    ab>=-EPS && bc>=-EPS && ca>=-EPS
+}
 fn channel_distance(a:&Rgba<u8>,b:&Rgba<u8>,color:bool)->f64{
     if color{
         ((a[0] as f64-b[0] as f64).abs()+
@@ -66,6 +85,7 @@ fn contribute(all:&mut Contributions,side:&SeamSide,t:f64,
         let px_dist=0.75+dist as f64;
         let q=[p[0]+n[0]*px_dist,p[1]+n[1]*px_dist];
         let Some((x,y,key))=pixel_at(q,w,h) else{continue};
+        if !pixel_inside_face(side,x,y,w,h) {continue}
         let existing=rgba.get_pixel(x,y);
         if existing[3]<255 {continue}
         let weight=1.0-dist as f64/(radius as f64+0.5);
@@ -111,6 +131,10 @@ pub(crate) fn blend_seams(src:&RgbaImage, pairs:&[SeamPair],
             let bb=[b[0]+nb[0]*1.15,b[1]+nb[1]*1.15];
             let (Some((ax,ay,_)),Some((bx,by,_)))=
                 (pixel_at(aa,w,h),pixel_at(bb,w,h)) else{continue};
+            // A one-pixel inward step can leave a thin or degenerate chart.
+            // Do not use neighboring island texels to decide seam similarity.
+            if !pixel_inside_face(&pair.left,ax,ay,w,h) ||
+               !pixel_inside_face(&pair.right,bx,by,w,h) {continue}
             let ca=src.get_pixel(ax,ay);
             let cb=src.get_pixel(bx,by);
             if ca[3]!=255 || cb[3]!=255 {continue}
@@ -207,6 +231,23 @@ mod tests{
         },&[pair],"baseColor",2,"gentle").unwrap();
         assert_eq!(far.width(),64);
         assert_eq!(blocked.eligible_samples,0);
+    }
+    #[test]fn thin_uv_charts_never_overpaint_neighbor_pixels(){
+        // Both charts are far thinner than the 3px requested repair band.
+        // Rounding their inward offsets would otherwise paint outside.
+        let a=SeamSide{start:[0.10,0.20],end:[0.90,0.20],
+            inside:[0.50,0.201],normal:[0.0,0.0,1.0]};
+        let b=SeamSide{start:[0.10,0.70],end:[0.90,0.70],
+            inside:[0.50,0.701],normal:[0.0,0.0,1.0]};
+        let source=RgbaImage::from_fn(64,64,|_,y|{
+            if y<32 {Rgba([120,120,120,255])}
+            else {Rgba([100,100,100,255])}
+        });
+        let (healed,report,_)=blend_seams(&source,
+            &[SeamPair{left:a,right:b}],"baseColor",3,"balanced").unwrap();
+        assert_eq!(report.changed_pixels,0);
+        assert_eq!(healed,source);
+        assert!(!pixel_inside_face(&a,32,49,64,64));
     }
     #[test]fn normal_role_always_rejected(){
         assert!(blend_seams(&RgbaImage::new(32,32),&[],"normal",2,"balanced").is_err());
