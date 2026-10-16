@@ -92,7 +92,11 @@ async function openStudio(page:import('@playwright/test').Page) {
 test('analysis reads UV health without writing a new model',async({page})=>{
   await openStudio(page);
   await page.getByTestId('texture-seam-analyze').click();
-  await expect(page.getByTestId('texture-seam-metrics')).toContainText('1187');
+  // Studio deliberately renders Turkish grouping (1.187, not 1187).
+  // Keep the numeric expectation aligned with the explicitly configured locale.
+  await expect(page.getByTestId('texture-seam-metrics')).toContainText(
+    (1187).toLocaleString('tr-TR')
+  );
   await expect(page.getByTestId('texture-seam-metrics')).toContainText('Normal');
   const c=await page.evaluate(()=>(window as unknown as {__seamCalls:unknown[]}).__seamCalls);
   expect(c).toHaveLength(1);
