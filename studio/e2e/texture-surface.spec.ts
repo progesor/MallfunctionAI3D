@@ -49,7 +49,13 @@ async function openStudio(page:import('@playwright/test').Page) {
             [{outputDir:'C:\\Test\\texture_exports\\pbr_1024',preset:'1024',
               generatedAt:'2026-10-15',mapCount:5}]:[];
           case 'get_asset_manifest':return {provenance:args?.assetId===review.id?
-            {origin:'texture-seam-repair',reviewOnly:true,parentAssetId:source.id}:
+            {origin:'texture-seam-repair',reviewOnly:true,parentAssetId:source.id,
+              inspection:{editablePixels:5023,maps:[
+                {role:'baseColor',changedPixels:2010,changedFraction:0.001916,
+                  meanPixelDelta:0.0125},
+                {role:'roughness',changedPixels:1713,changedFraction:0.001633,
+                  meanPixelDelta:0.0095},
+              ]}}:
             {origin:'comfy',reviewOnly:false}};
           case 'analyze_texture_seams':
             calls.push({inspect:args});
@@ -107,11 +113,15 @@ test('repair creates REVIEW asset and only selected PBR roles',async({page})=>{
   await page.getByTestId('texture-seam-analyze').click();
   await page.getByTestId('texture-seam-apply').click();
   await expect(page.getByTestId('texture-seam-result')).toContainText('Unity export');
+  await expect(page.getByTestId('texture-seam-scope')).toContainText('5.000');
   const c=await page.evaluate(()=>(window as unknown as {__seamCalls:unknown[]}).__seamCalls);
   expect(c[1]).toMatchObject({repair:{assetId:source.id,
     roles:['baseColor','metallic','roughness','occlusion']}});
   await page.getByRole('button',{name:'Düzeltilen modeli 3D görüntüle'}).click();
   await expect(page.getByTestId('texture-seam-review')).toBeVisible();
+  await expect(page.getByTestId('texture-review-limitation')).toContainText('bantlaşmasını');
+  await expect(page.getByTestId('texture-review-impact')).toContainText('5.023');
+  await expect(page.getByTestId('texture-review-impact')).toContainText('baseColor');
   await expect(page.getByTestId('texture-approve-button')).toBeDisabled();
   await page.getByRole('checkbox',{name:'Görsel karşılaştırmayı tamamladım'}).check();
   await page.getByTestId('texture-approve-button').click();
